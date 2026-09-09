@@ -1,0 +1,18 @@
+# Production overrides — do NOT commit secrets, inject via CI/CD or --set.
+image:
+  tag: "1.0.0"   # override with the actual release tag
+
+orchestrator:
+  serviceType: LoadBalancer   # or NodePort / use Ingress
+
+secrets:
+  photon_api_key: ""          # inject via CI: --set secrets.photon_api_key=$PHOTON_API_KEY
+  feishu_app_id: ""
+  feishu_app_secret: ""
+  meego_plugin_id: ""
+  meego_plugin_secret: ""
+  meego_user_key: ""
+  orchestrator_api_key: ""
+  dashboard_username: ""
+  dashboard_password: ""
+  dashboard_jwt_secret: ""

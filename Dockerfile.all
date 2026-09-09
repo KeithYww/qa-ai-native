@@ -1,0 +1,15 @@
+FROM agentic-qa-base:latest
+
+WORKDIR /app
+
+COPY agents/       /app/agents/
+COPY common/       /app/common/
+COPY orchestrator/ /app/orchestrator/
+COPY scripts/      /app/scripts/
+COPY config.py     /app/config.py
+
+ENV PYTHONPATH=/app
+
+EXPOSE 8000 8002 8003 8004 9010
+
+CMD ["python", "scripts/start_all.py"]

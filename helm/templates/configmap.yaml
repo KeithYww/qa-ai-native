@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-qa.fullname" . }}-config
+  labels:
+    {{- include "agentic-qa.labels" . | nindent 4 }}
+data:
+  MEEGO_PROJECT_KEY: {{ .Values.config.meego_project_key | quote }}
+  PHOTON_API_BASE_URL: {{ .Values.config.photon_api_base_url | quote }}
+  PROMPT_INJECTION_CHECK_ENABLED: {{ .Values.config.prompt_injection_check_enabled | quote }}
+  LOG_LEVEL: {{ .Values.config.log_level | quote }}
+  FEISHU_MCP_SERVER_URL: {{ .Values.config.feishu_mcp_server_url | quote }}
+  REMOTE_EXECUTION_AGENT_HOSTS: {{ .Values.config.remote_execution_agent_hosts | quote }}
+  AGENT_DISCOVERY_PORTS: {{ .Values.config.agent_discovery_ports | quote }}

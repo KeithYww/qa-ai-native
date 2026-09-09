@@ -1,0 +1,39 @@
+image:
+  all: agentic-qa
+  feishuMcp: agentic-qa
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# Single container runs all services — aggregate resource limits.
+resources:
+  requests:
+    cpu: "1500m"
+    memory: "2Gi"
+  limits:
+    cpu: "3"
+    memory: "5Gi"
+
+serviceType: ClusterIP
+
+# Non-sensitive config — goes into ConfigMap.
+config:
+  meego_project_key: "union-platform"
+  photon_api_base_url: "https://coding.corp.photontech.cc"
+  prompt_injection_check_enabled: "false"
+  log_level: "INFO"
+  feishu_mcp_server_url: "http://localhost:9010/sse"
+  remote_execution_agent_hosts: "http://localhost"
+  agent_discovery_ports: "8002-8004"
+
+# Sensitive config — goes into Secret. Override in values.prod.yaml or via --set.
+secrets:
+  photon_api_key: ""
+  feishu_app_id: ""
+  feishu_app_secret: ""
+  meego_plugin_id: ""
+  meego_plugin_secret: ""
+  meego_user_key: ""
+  orchestrator_api_key: ""
+  dashboard_username: ""
+  dashboard_password: ""
+  dashboard_jwt_secret: ""
