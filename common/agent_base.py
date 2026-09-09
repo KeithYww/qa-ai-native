@@ -372,7 +372,7 @@ class AgentBase(ABC):
                 "copyright": "Copyright (C) 2025-2026 Taras Paruta",
                 "license": "AGPL-3.0-only",
                 "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
-                "source_url": "https://github.com/partarstu/agentic-qa-framework",
+                "source_url": "https://github.com/KeithYww/qa-ai-native",
             }
 
         return a2a_app
