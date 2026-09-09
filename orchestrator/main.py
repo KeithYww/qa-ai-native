@@ -1323,7 +1323,8 @@ async def _write_test_cases_to_feishu_project(
     if config.MEEGO_PLUGIN_ID and config.MEEGO_PLUGIN_SECRET:
         client = MeegoClient()
         keys = client.create_test_cases(test_cases, project_key, story_id)
-        for tc, key in zip(test_cases, keys):
+        # create_test_cases skips ids it couldn't create, so keys can be shorter than test_cases.
+        for tc, key in zip(test_cases, keys, strict=False):
             tc.key = key
             tc.parent_issue_key = story_id
     else:

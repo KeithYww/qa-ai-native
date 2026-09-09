@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = utils.get_logger("test_case_review_agent")
 
-_test_cases_ctx: ContextVar[list] = ContextVar("_review_test_cases_ctx", default=[])
+_test_cases_ctx: ContextVar[list | None] = ContextVar("_review_test_cases_ctx", default=None)
 _doc_content_ctx: ContextVar[str] = ContextVar("_review_doc_content_ctx", default="")
 _review_result_ctx: ContextVar[list[TestCaseReviewFeedbacks]] = ContextVar("_review_result_ctx")
 
