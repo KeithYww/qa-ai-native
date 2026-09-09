@@ -5,15 +5,6 @@
 QuAIA™ is an open-source framework for intelligent automation of the most important software testing life cycle 
 processes starting with software requirements review and up to generating test execution reports.
 
-The corresponding article on Medium can be
-found [here](https://medium.com/@partarstu/the-next-evolution-in-software-testing-from-automation-to-autonomy-1bd7767802e1).
-
-## Demo
-
-Watch a demo of QuAIA™ in action:
-
-[QuAIA™ Framework Demo](https://youtu.be/LUf6ydlKfIU)
-
 ## Features
 
 * **Modular Agent Architecture:** Includes specialized agents for:
@@ -146,8 +137,8 @@ to run the validation locally (requires Node.js 20+).
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/partarstu/agentic-qa-framework.git
-   cd agentic-qa-framework
+   git clone https://github.com/KeithYww/qa-ai-native.git
+   cd qa-ai-native
    ```
 
 2. **Install `uv`** (if not already installed):

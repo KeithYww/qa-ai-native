@@ -4,15 +4,6 @@
 
 QuAIA™ 是一个开源框架,用于智能化自动执行软件测试生命周期中最重要的环节——从软件需求评审一直到生成测试执行报告。
 
-对应的 Medium 文章可以在
-[这里](https://medium.com/@partarstu/the-next-evolution-in-software-testing-from-automation-to-autonomy-1bd7767802e1)找到。
-
-## 演示
-
-观看 QuAIA™ 的实际运行演示:
-
-[QuAIA™ Framework Demo](https://youtu.be/LUf6ydlKfIU)
-
 ## 功能特性
 
 * **模块化智能体架构:** 包含以下专用智能体:
@@ -143,8 +134,8 @@ Orchestrator 使用基于锁的原子化智能体选择机制,防止多个任务
 
 1. **克隆代码仓库:**
    ```bash
-   git clone https://github.com/partarstu/agentic-qa-framework.git
-   cd agentic-qa-framework
+   git clone https://github.com/KeithYww/qa-ai-native.git
+   cd qa-ai-native
    ```
 
 2. **安装 `uv`**(如尚未安装):
