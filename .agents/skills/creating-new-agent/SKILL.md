@@ -7,7 +7,7 @@ description: Creates new A2A-compliant agents in the QuAIA framework. Use when a
 
 # Creating a New Agent
 
-This skill provides a comprehensive guide for creating a new specialized agent in the QuAIA™ framework. Agents are A2A-compliant (Agent-to-Agent protocol) services that handle specific QA-related tasks.
+This skill provides a comprehensive guide for creating a new specialized agent in the QuAIA framework. Agents are A2A-compliant (Agent-to-Agent protocol) services that handle specific QA-related tasks.
 
 ## Overview
 
