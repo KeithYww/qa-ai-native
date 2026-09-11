@@ -189,8 +189,7 @@ class AgentBase(ABC):
             try:
                 logger.info(f"Starting agent run (attempt {attempt + 1}/{config.RetryConfig.MAX_RETRIES})...")
                 try:
-                    async with self.agent:
-                        return await self.agent.run(received_request, deps=deps, usage_limits=usage_limits)
+                    return await self.agent.run(received_request, deps=deps, usage_limits=usage_limits)
                 except ExceptionGroup as eg:
                     if any(isinstance(exc, httpx.ConnectError) for exc in eg.exceptions) and self.mcp_servers:
                         mcp_urls = [server.url for server in self.mcp_servers]
@@ -316,7 +315,12 @@ class AgentBase(ABC):
     async def _lifespan(self, app: FastAPI):
         logger.info(f"{self.agent_name} started.")
         logger.info(f"Using following MCP server URLs: {[server.url for server in self.mcp_servers]}")
-        yield
+        # Enter the agent context once at startup so MCP connections are established
+        # in this (lifespan) task and held for the server's lifetime. Concurrent
+        # agent.run() calls then share a single live MCP session without re-entering
+        # the context, which would cause anyio cancel-scope cross-task errors.
+        async with self.agent:
+            yield
         if self.vector_db_service:
             await self.vector_db_service.close()
         logger.info("Shutting down.")

@@ -862,20 +862,29 @@ async def _run_pipeline(story_id: str, project_key: str, feishu_doc: str) -> Non
 
 
 async def _pipeline_consumer() -> None:
-    """Sequentially consumes and executes queued jobs.
+    """Concurrently consumes and executes queued jobs up to MAX_CONCURRENT_PIPELINES at a time.
 
-    Each job (a test-case pipeline run or a requirements review) is expected to handle
-    and log its own errors, mirroring _run_pipeline's existing behavior. This outer
-    except is a last-resort safety net, not the primary error-reporting path.
+    Each job (a test-case pipeline run or a requirements review) is dispatched as an
+    asyncio background task and guarded by a semaphore so no more than
+    MAX_CONCURRENT_PIPELINES run simultaneously. task_done() is called inside the
+    background task when the job finishes, preserving correct queue join semantics.
     """
+    sem = asyncio.Semaphore(config.OrchestratorConfig.MAX_CONCURRENT_PIPELINES)
+
+    async def _run_job(job: Callable[[], Awaitable[None]]) -> None:
+        async with sem:
+            try:
+                await job()
+            except Exception as e:
+                _record_error(f"Queued job failed unexpectedly: {e}")
+            finally:
+                _pipeline_queue.task_done()
+
     while True:
         job = await _pipeline_queue.get()
-        try:
-            await job()
-        except Exception as e:
-            _record_error(f"Queued job failed unexpectedly: {e}")
-        finally:
-            _pipeline_queue.task_done()
+        task = asyncio.create_task(_run_job(job))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
 
 # noinspection PyUnusedLocal

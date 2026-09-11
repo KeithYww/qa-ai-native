@@ -168,6 +168,9 @@ class OrchestratorConfig:
     REQUIREMENT_REVIEW_MAX_PER_MINUTE = int(os.environ.get("REQUIREMENT_REVIEW_MAX_PER_MINUTE", "5"))
     # Maximum number of concurrent tasks a single agent process can handle safely.
     MAX_SLOTS_PER_AGENT = int(os.environ.get("MAX_SLOTS_PER_AGENT", "3"))
+    # Maximum number of pipelines dispatched concurrently by the orchestrator.
+    # Must be ≤ MAX_SLOTS_PER_AGENT to avoid overwhelming a single agent.
+    MAX_CONCURRENT_PIPELINES = int(os.environ.get("MAX_CONCURRENT_PIPELINES", "3"))
 
 
 # Dashboard Authentication
