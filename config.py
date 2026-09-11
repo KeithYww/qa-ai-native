@@ -153,8 +153,8 @@ class OrchestratorConfig:
     TASK_EXECUTION_TIMEOUT = float(os.environ.get("TASK_EXECUTION_TIMEOUT", "7200"))
     AGENT_DISCOVERY_TIMEOUT_SECONDS = 120
     INCOMING_REQUEST_WAIT_TIMEOUT = AGENT_DISCOVERY_TIMEOUT_SECONDS + 5
-    MODEL_NAME = "claude-sonnet-5"
-    FALLBACK_MODEL_NAME = "gpt-5.6-terra"
+    MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     API_KEY = os.environ.get("ORCHESTRATOR_API_KEY")
     AGENT_DISCOVERY_PORTS = os.environ.get("AGENT_DISCOVERY_PORTS", "8001-8007")
     REMOTE_EXECUTION_AGENT_HOSTS = os.environ.get("REMOTE_EXECUTION_AGENT_HOSTS", AGENT_BASE_URL)
@@ -204,7 +204,7 @@ class TestCaseClassificationAgentConfig:
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
     MODEL_NAME = "deepseek-v4-flash"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     MAX_REQUESTS_PER_TASK = 30
     MAX_TOKENS = 16000
 
@@ -220,8 +220,8 @@ class TestCaseGenerationAgentConfig:
     PORT = int(os.environ.get("PORT", "8002"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "qwen3.8-flash"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     MAX_REQUESTS_PER_TASK = 30
     # Read Phase 1 env var as fallback for zero-downtime migration
     AC_BATCH_SIZE = max(1, int(
@@ -232,7 +232,7 @@ class TestCaseGenerationAgentConfig:
 
 # Test Case Review Agent
 class TestCaseReviewAgentConfig:
-    THINKING_LEVEL: ThinkingLevel = "medium"
+    THINKING_LEVEL: ThinkingLevel = "low"
     REVIEW_COMPLETE_STATUS_NAME = "Review Complete"
     OWN_NAME = "Test Case Review Agent"
     PORT = int(os.environ.get("PORT", "8004"))
@@ -248,12 +248,12 @@ class TestCaseReviewAgentConfig:
 
 # Incident Creation Agent
 class IncidentCreationAgentConfig:
-    THINKING_LEVEL: ThinkingLevel = "medium"
+    THINKING_LEVEL: ThinkingLevel = "low"
     OWN_NAME = "Incident Creation Agent"
     PORT = int(os.environ.get("PORT", "8007"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "kimi-k3"
+    MODEL_NAME = "claude-sonnet-5"
     FALLBACK_MODEL_NAME = "deepseek-v4-flash"
     MAX_REQUESTS_PER_TASK = 30
     MIN_SIMILARITY_SCORE = float(os.environ.get("INCIDENT_AGENT_MIN_SIMILARITY_SCORE", "0.7"))
