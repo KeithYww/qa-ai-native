@@ -313,17 +313,42 @@ class AgentBase(ABC):
     # noinspection PyUnusedLocal
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
+        from contextlib import AsyncExitStack
+
         logger.info(f"{self.agent_name} started.")
         logger.info(f"Using following MCP server URLs: {[server.url for server in self.mcp_servers]}")
         # Enter the agent context once at startup so MCP connections are established
         # in this (lifespan) task and held for the server's lifetime. Concurrent
         # agent.run() calls then share a single live MCP session without re-entering
         # the context, which would cause anyio cancel-scope cross-task errors.
-        async with self.agent:
+        # Retry to tolerate brief MCP startup delays in container environments.
+        stack = AsyncExitStack()
+        for attempt in range(config.RetryConfig.MAX_RETRIES):
+            try:
+                await stack.enter_async_context(self.agent)
+                break
+            except Exception as exc:
+                await stack.aclose()
+                stack = AsyncExitStack()
+                if attempt < config.RetryConfig.MAX_RETRIES - 1:
+                    delay = config.RetryConfig.RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
+                    logger.warning(
+                        f"MCP startup failed (attempt {attempt + 1}/{config.RetryConfig.MAX_RETRIES}): {exc}; "
+                        f"retrying in {delay:.0f}s"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"Agent '{self.agent_name}' failed to connect to MCP after "
+                        f"{config.RetryConfig.MAX_RETRIES} attempts"
+                    ) from exc
+        try:
             yield
-        if self.vector_db_service:
-            await self.vector_db_service.close()
-        logger.info("Shutting down.")
+        finally:
+            await stack.aclose()
+            if self.vector_db_service:
+                await self.vector_db_service.close()
+            logger.info("Shutting down.")
 
     @staticmethod
     def _fetch_attachments(attachment_paths: list[str]) -> dict[str, BinaryContent]:
