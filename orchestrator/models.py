@@ -59,6 +59,9 @@ class TaskRecord:
     agent_logs: list[str] | None = None
     current_activity: str | None = None
     token_usage: dict[str, Any] | None = None
+    # Human-readable summary of what the agent produced (e.g. generated test cases, review feedback).
+    # Stored here so the dashboard can show output without the full trace.
+    result_summary: str | None = None
     # Redacted debug trace of the agent's run (JSON string). Deliberately excluded from
     # to_dict() below — it can be much larger than the rest of the record and is only
     # needed by the dedicated trace endpoint, not the /api/dashboard/tasks list.
@@ -86,6 +89,7 @@ class TaskRecord:
             "agent_logs": self.agent_logs,
             "current_activity": self.current_activity,
             "token_usage": self.token_usage,
+            "result_summary": self.result_summary,
         }
 
 
@@ -172,6 +176,12 @@ class TaskHistory:
         async with self._lock:
             if task_id in self._tasks_by_id:
                 self._tasks_by_id[task_id].trace_json = trace_json
+
+    async def update_result_summary(self, task_id: str, summary: str) -> None:
+        """Store a human-readable summary of what the agent produced."""
+        async with self._lock:
+            if task_id in self._tasks_by_id:
+                self._tasks_by_id[task_id].result_summary = summary
 
     async def get_by_id(self, task_id: str) -> TaskRecord | None:
         """Get a specific task by ID."""

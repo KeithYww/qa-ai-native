@@ -444,7 +444,7 @@ class TestRequestIncidentCreationErrorHandling:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [error_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [error_artifact]
 
             from orchestrator.main import _request_incident_creation
@@ -487,7 +487,7 @@ class TestRequestIncidentCreationErrorHandling:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [success_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [success_artifact]
 
             from orchestrator.main import _request_incident_creation
@@ -517,7 +517,7 @@ class TestRequestTestCasesGenerationErrorHandling:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [error_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [error_artifact]
 
             from orchestrator.main import _request_test_cases_generation
@@ -553,7 +553,7 @@ class TestRequestTestCasesGenerationErrorHandling:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [success_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [success_artifact]
 
             from orchestrator.main import _request_test_cases_generation
@@ -602,7 +602,7 @@ class TestExecuteSingleTestMultipleTextParts:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [multi_part_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [multi_part_artifact]
             mock_registry.get_name = AsyncMock(return_value="Test Agent")
 
@@ -662,7 +662,7 @@ class TestExecuteSingleTestMultipleTextParts:
         ):
             mock_task = MagicMock()
             mock_task.artifacts = [single_part_artifact]
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
             mock_get_artifacts.return_value = [single_part_artifact]
             mock_registry.get_name = AsyncMock(return_value="Test Agent")
 
@@ -883,7 +883,7 @@ class TestRunRequirementReview:
             patch("orchestrator.main._send_task_to_agent", new_callable=AsyncMock) as mock_send,
             patch("orchestrator.main._validate_task_status") as mock_validate,
         ):
-            mock_send.return_value = mock_task
+            mock_send.return_value = (mock_task, "test-internal-task-id")
 
             await _run_requirement_review("WI-1", "PROJ", "https://example.feishu.cn/docx/x")
 

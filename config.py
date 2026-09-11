@@ -241,7 +241,7 @@ class TestCaseReviewAgentConfig:
     MODEL_NAME = "claude-sonnet-5"
     FALLBACK_MODEL_NAME = "deepseek-v4-flash"
     MAX_REQUESTS_PER_TASK = 30
-    TEST_CASE_REVIEW_BATCH_SIZE = 5
+    TEST_CASE_REVIEW_BATCH_SIZE = 10
     MAX_TOKENS = 16000
     TOTAL_TOKENS_LIMIT_PER_TASK = 4_000_000
 
