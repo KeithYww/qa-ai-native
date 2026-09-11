@@ -4,7 +4,7 @@
 
 
 import { useRef, useEffect, useState } from 'react';
-import { X, Terminal, Filter, Loader2 } from 'lucide-react';
+import { X, Terminal, Filter, Loader2, FileText } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '../api/dashboardApi';
 import { useSseEvents } from '../api/sse';
@@ -18,6 +18,7 @@ interface LogModalProps {
   /** When true and agentId is provided, opens the per-agent SSE for live logs. */
   isRunning?: boolean;
   title: string;
+  resultSummary?: string | null;
 }
 
 function parseTs(ts: string): Date {
@@ -41,7 +42,7 @@ function parseLiveLine(line: string) {
   };
 }
 
-export function LogModal({ isOpen, onClose, taskId, agentId, isRunning, title }: LogModalProps) {
+export function LogModal({ isOpen, onClose, taskId, agentId, isRunning, title, resultSummary }: LogModalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -213,6 +214,19 @@ export function LogModal({ isOpen, onClose, taskId, agentId, isRunning, title }:
             </label>
           </div>
         </div>
+
+        {/* Result Summary — shown when available */}
+        {resultSummary && (
+          <div className="p-4 border-b border-slate-700 bg-slate-800/80">
+            <div className="flex items-center gap-2 mb-2 text-sm font-medium text-indigo-300">
+              <FileText className="w-4 h-4" />
+              生成结果
+            </div>
+            <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed max-h-64 overflow-y-auto">
+              {resultSummary}
+            </pre>
+          </div>
+        )}
 
         {/* Content */}
         <div

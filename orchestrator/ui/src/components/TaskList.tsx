@@ -130,6 +130,11 @@ export function TaskList({ tasks, isLoading, liveTaskStates }: TaskListProps) {
                           <span className="truncate">{liveTaskStates[task.task_id].current_activity}</span>
                         </div>
                       )}
+                      {task.status === 'COMPLETED' && task.result_summary && (
+                        <div className="text-xs text-emerald-400/80 mt-0.5 truncate">
+                          {task.result_summary.split('\n')[0]}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 text-slate-300">{task.agent_name}</td>
                     <td className="py-3 text-slate-400">{formatTime(task.start_time)}</td>
@@ -165,6 +170,7 @@ export function TaskList({ tasks, isLoading, liveTaskStates }: TaskListProps) {
           agentId={tasks?.find((t) => t.task_id === selectedTask)?.agent_id}
           isRunning={tasks?.find((t) => t.task_id === selectedTask)?.status === 'RUNNING'}
           title="Task Execution Logs"
+          resultSummary={tasks?.find((t) => t.task_id === selectedTask)?.result_summary}
         />
       )}
       {traceTask && (
