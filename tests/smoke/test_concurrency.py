@@ -23,7 +23,7 @@ Design:
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import httpx
 import pytest
@@ -103,7 +103,7 @@ def test_concurrent_generation_tasks_dispatched(
     We poll until at least 2 generation tasks appear with start_time after t0
     and assert they started within _MAX_DISPATCH_GAP_SECONDS of each other.
     """
-    t0_utc = datetime.fromtimestamp(concurrent_pipeline_result["t0"], tz=timezone.utc)
+    t0_utc = datetime.fromtimestamp(concurrent_pipeline_result["t0"], tz=UTC)
     deadline = time.monotonic() + _PIPELINE_TIMEOUT
 
     gen_tasks: list[dict] = []
@@ -114,7 +114,7 @@ def test_concurrent_generation_tasks_dispatched(
             if "Generation Agent" in (t.get("agent_name") or "")
             and t.get("start_time")
             # Server datetimes are UTC-naive; attach UTC before comparing.
-            and datetime.fromisoformat(t["start_time"]).replace(tzinfo=timezone.utc) >= t0_utc
+            and datetime.fromisoformat(t["start_time"]).replace(tzinfo=UTC) >= t0_utc
         ]
         if len(gen_tasks) >= 2:
             break
@@ -126,7 +126,7 @@ def test_concurrent_generation_tasks_dispatched(
     )
 
     starts = sorted(
-        datetime.fromisoformat(t["start_time"]).replace(tzinfo=timezone.utc) for t in gen_tasks
+        datetime.fromisoformat(t["start_time"]).replace(tzinfo=UTC) for t in gen_tasks
     )
     gap_seconds = (starts[-1] - starts[0]).total_seconds()
     assert gap_seconds <= _MAX_DISPATCH_GAP_SECONDS, (
@@ -144,7 +144,7 @@ def test_concurrent_generation_at_least_one_succeeds(
 
     Proves the agent handles concurrent work without state pollution or crash.
     """
-    t0_utc = datetime.fromtimestamp(concurrent_pipeline_result["t0"], tz=timezone.utc)
+    t0_utc = datetime.fromtimestamp(concurrent_pipeline_result["t0"], tz=UTC)
     deadline = time.monotonic() + _PIPELINE_TIMEOUT
 
     completed_tasks: list[dict] = []
@@ -154,7 +154,7 @@ def test_concurrent_generation_at_least_one_succeeds(
             t for t in all_tasks
             if "Generation Agent" in (t.get("agent_name") or "")
             and t.get("start_time")
-            and datetime.fromisoformat(t["start_time"]).replace(tzinfo=timezone.utc) >= t0_utc
+            and datetime.fromisoformat(t["start_time"]).replace(tzinfo=UTC) >= t0_utc
             and t.get("status") == "COMPLETED"
         ]
         if completed_tasks:

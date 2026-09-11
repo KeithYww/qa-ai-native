@@ -6,13 +6,14 @@
 Streaming primitives for SSE event payloads and log handler ContextVar.
 """
 
-import asyncio
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    import asyncio
+
     from common.agent_log_capture import AgentLogCaptureHandler
 
 # ---------------------------------------------------------------------------
