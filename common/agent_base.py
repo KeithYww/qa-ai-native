@@ -146,8 +146,11 @@ class AgentBase(ABC):
         any other tool. You may call it in parallel with other tool calls.
         Examples: "Fetching Jira issue PROJ-123", "Generating test steps for AC-2".
         """
+        from common.streaming import current_activity_queue
+
+        q = current_activity_queue.get(None) or self._activity_queue
         try:
-            self._activity_queue.put_nowait(description)
+            q.put_nowait(description)
         except asyncio.QueueFull:
             # No active consumer (e.g. standalone run) or the consumer fell behind:
             # drop the update rather than letting the queue grow without bound.
@@ -175,7 +178,9 @@ class AgentBase(ABC):
             output_retries=config.RetryConfig.MAX_RETRIES,
         )
 
-    async def _get_agent_execution_result(self, received_request: list[UserContent]) -> AgentRunResult[Any] | None:
+    async def _get_agent_execution_result(
+        self, received_request: list[UserContent], deps: Any = None
+    ) -> AgentRunResult[Any] | None:
         usage_limits = UsageLimits(
             tool_calls_limit=compute_activity_budget(self.get_max_requests_per_task()),
             total_tokens_limit=self.get_total_tokens_limit(),
@@ -185,7 +190,7 @@ class AgentBase(ABC):
                 logger.info(f"Starting agent run (attempt {attempt + 1}/{config.RetryConfig.MAX_RETRIES})...")
                 try:
                     async with self.agent:
-                        return await self.agent.run(received_request, usage_limits=usage_limits)
+                        return await self.agent.run(received_request, deps=deps, usage_limits=usage_limits)
                 except ExceptionGroup as eg:
                     if any(isinstance(exc, httpx.ConnectError) for exc in eg.exceptions) and self.mcp_servers:
                         mcp_urls = [server.url for server in self.mcp_servers]
@@ -209,12 +214,12 @@ class AgentBase(ABC):
                     raise
         return None
 
-    async def run(self, received_message: Message) -> Message:
+    async def run(self, received_message: Message, deps: Any = None) -> Message:
         self.latest_received_message = received_message
         received_request = self._get_all_received_contents(received_message)
 
         try:
-            result = await self._get_agent_execution_result(received_request)
+            result = await self._get_agent_execution_result(received_request, deps=deps)
             self._capture_token_usage(result)
             self._capture_trace(result)
             self._log_llm_comments_if_result_incomplete(result.output)

@@ -143,7 +143,7 @@ async def test_usage_limits_tool_calls_limit_is_doubled(test_agent_instance):
     """tool_calls_limit must equal get_max_requests_per_task() * 2."""
     captured: list[UsageLimits] = []
 
-    async def fake_run(request, usage_limits=None):
+    async def fake_run(request, usage_limits=None, deps=None):
         captured.append(usage_limits)
         mock_result = MagicMock()
         mock_result.output = MockOutput(result="ok")

@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +9,10 @@ from a2a.types import Message
 
 # Mock MCPServerSSE before importing the module
 with patch("pydantic_ai.mcp.MCPServerSSE"):
-    from agents.test_case_generation.main import TestCaseGenerationAgent, _generation_result_ctx
+    from agents.test_case_generation.main import (
+        TestCaseGenerationAgent,
+        _GenerationRunState,
+    )
 
 from common.agent_base import AgentBase
 from common.models import (
@@ -81,13 +83,15 @@ async def test_generate_test_cases_flow(agent):
 
     agent._fetch_attachments = MagicMock(return_value={})
 
-    holder: list = []
-    _generation_result_ctx.set(holder)
-    result = await agent._generate_test_cases("Jira Content", ["/path/to/attachment.png"])
+    state = _GenerationRunState()
+    mock_ctx = MagicMock()
+    mock_ctx.deps = state
+
+    result = await agent._generate_test_cases(mock_ctx, "Jira Content", ["/path/to/attachment.png"])
 
     assert isinstance(result, str)
     assert "0" in result
-    assert holder == [expected_test_cases]
+    assert state.result == expected_test_cases
     agent._fetch_attachments.assert_called_once_with(["/path/to/attachment.png"])
     agent.ac_extractor_agent.run.assert_called_once()
     # 1 AC with batch_size=8 → exactly 1 batch call
@@ -123,7 +127,8 @@ async def test_generate_test_cases_from_acs_batches(agent):
 
 
 @pytest.mark.asyncio
-async def test_run_returns_full_result_via_context_var(agent):
+async def test_run_returns_full_result_via_deps(agent):
+    """run() returns the GeneratedTestCases stored in deps.result by the tool."""
     tc = TestCase(
         key=None, name="TC-1", summary="s", comment="", preconditions=None,
         parent_issue_key=None,
@@ -135,8 +140,8 @@ async def test_run_returns_full_result_via_context_var(agent):
     mock_message.context_id = "ctx-1"
     mock_message.task_id = "task-1"
 
-    async def fake_super_run(self_arg, msg):
-        _generation_result_ctx.get().append(full_result)
+    async def fake_super_run(self_arg, msg, deps=None):
+        deps.result = full_result
         return MagicMock(spec=Message)
 
     with patch.object(AgentBase, "run", new=fake_super_run):
@@ -148,10 +153,11 @@ async def test_run_returns_full_result_via_context_var(agent):
 
 @pytest.mark.asyncio
 async def test_run_falls_back_when_tool_not_called(agent):
+    """When the tool is never called (deps.result stays None), run() returns the LLM message."""
     mock_message = MagicMock(spec=Message)
     fallback_message = MagicMock(spec=Message)
 
-    async def fake_super_run(self_arg, msg):
+    async def fake_super_run(self_arg, msg, deps=None):
         return fallback_message
 
     with patch.object(AgentBase, "run", new=fake_super_run):

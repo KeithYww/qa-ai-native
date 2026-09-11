@@ -13,7 +13,7 @@ from a2a.types import Message, TaskArtifactUpdateEvent, TaskState, TaskStatusUpd
 
 from common.agent_executor import DefaultAgentExecutor
 from common.agent_log_capture import AgentLogCaptureHandler
-from common.streaming import current_log_handler
+from common.streaming import current_activity_queue, current_log_handler
 
 
 @pytest.fixture
@@ -259,10 +259,12 @@ async def test_contextvars_set_during_run_and_reset_after(mock_agent, mock_conte
     mock_context.message = MagicMock()
 
     handler_during_run = None
+    activity_queue_during_run = None
 
     async def capture_context(_message):
-        nonlocal handler_during_run
+        nonlocal handler_during_run, activity_queue_during_run
         handler_during_run = current_log_handler.get()
+        activity_queue_during_run = current_activity_queue.get()
         result = MagicMock()
         result.parts = []
         return result
@@ -273,6 +275,8 @@ async def test_contextvars_set_during_run_and_reset_after(mock_agent, mock_conte
 
     assert isinstance(handler_during_run, AgentLogCaptureHandler)
     assert current_log_handler.get() is None
+    assert activity_queue_during_run is not None
+    assert current_activity_queue.get() is None
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +317,8 @@ async def test_final_drain_emits_remaining_log_batch(mock_agent, mock_context, m
 
 
 @pytest.mark.asyncio
-async def test_concurrent_execute_lock(mock_agent, mock_event_queue):
+async def test_concurrent_tasks_run_in_parallel(mock_agent, mock_event_queue):
+    """Without _execute_lock, two execute() calls on the same executor run concurrently."""
     executor = DefaultAgentExecutor(mock_agent)
     execution_order = []
 
@@ -344,7 +349,8 @@ async def test_concurrent_execute_lock(mock_agent, mock_event_queue):
 
     await asyncio.gather(task1, task2)
 
-    assert execution_order == ["start", "end", "start", "end"]
+    # Both tasks start before either finishes — interleaved execution confirms concurrency.
+    assert execution_order == ["start", "start", "end", "end"]
 
 
 @pytest.mark.asyncio
@@ -359,8 +365,10 @@ async def test_flush_activity_loop_update_status_failure(mock_agent, mock_contex
     mock_updater.complete = AsyncMock()
 
     async def run_agent(_message):
-        await mock_agent.activity_queue.put("activity 1")
-        await mock_agent.activity_queue.put("activity 2")
+        # Route activities via the per-request ContextVar queue, as report_activity does.
+        q = current_activity_queue.get()
+        await q.put("activity 1")
+        await q.put("activity 2")
         await asyncio.sleep(0.02)
         mock_result = MagicMock()
         mock_result.parts = []
@@ -396,3 +404,56 @@ async def test_execute_cancelled_swallowed_and_emits_canceled_event(mock_agent, 
         if isinstance(call[0][0], TaskStatusUpdateEvent) and call[0][0].status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-request activity queue routing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_activity_queue_routes_via_contextvar(mock_agent, mock_context, mock_event_queue):
+    """Activities written to current_activity_queue during agent.run() reach the updater."""
+    executor = DefaultAgentExecutor(mock_agent)
+    mock_context.message = MagicMock()
+
+    mock_updater = MagicMock()
+    mock_updater.update_status = AsyncMock()
+    mock_updater.start_work = AsyncMock()
+    mock_updater.add_artifact = AsyncMock()
+    mock_updater.complete = AsyncMock()
+
+    async def run_agent(_message):
+        q = current_activity_queue.get()
+        await q.put("doing work")
+        await asyncio.sleep(0.02)
+        mock_result = MagicMock()
+        mock_result.parts = []
+        return mock_result
+
+    mock_agent.run.side_effect = run_agent
+
+    with patch("common.agent_executor.TaskUpdater", return_value=mock_updater):
+        await executor.execute(mock_context, mock_event_queue)
+
+    working_calls = [
+        call for call in mock_updater.update_status.call_args_list
+        if call.kwargs.get("state") == TaskState.TASK_STATE_WORKING
+        or (call.args and call.args[0] == TaskState.TASK_STATE_WORKING)
+    ]
+    assert len(working_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_activity_queue_contextvar_is_reset_after_run(mock_agent, mock_context, mock_event_queue):
+    """current_activity_queue is None after execute() completes, whether run succeeds or fails."""
+    executor = DefaultAgentExecutor(mock_agent)
+    mock_context.message = MagicMock()
+
+    mock_result = MagicMock()
+    mock_result.parts = []
+    mock_agent.run.return_value = mock_result
+
+    await executor.execute(mock_context, mock_event_queue)
+
+    assert current_activity_queue.get(None) is None

@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import asyncio
-from contextvars import ContextVar
+from dataclasses import dataclass
 from itertools import batched
 
 from a2a.helpers import new_text_message
 from a2a.types import AgentSkill, Message
+from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPServerSSE
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.settings import ThinkingLevel
@@ -26,13 +27,18 @@ from common.models import (
     AcceptanceCriteriaItem,
     AcceptanceCriteriaList,
     GeneratedTestCases,
-    JiraUserStory,
 )
 from common.services.test_management_system_client_provider import get_test_management_client
 
 logger = utils.get_logger("test_case_generation_agent")
 feishu_mcp_server = MCPServerSSE(url=config.FEISHU_MCP_SERVER_URL, timeout=config.MCP_SERVER_TIMEOUT_SECONDS)
-_generation_result_ctx: ContextVar[list[GeneratedTestCases]] = ContextVar("_generation_result_ctx")
+
+
+@dataclass(slots=True)
+class _GenerationRunState:
+    """Per-request state container for TestCaseGenerationAgent, threaded via pydantic-ai deps."""
+
+    result: GeneratedTestCases | None = None
 
 
 class TestCaseGenerationAgent(AgentBase):
@@ -77,7 +83,7 @@ class TestCaseGenerationAgent(AgentBase):
             output_type=str,
             instructions=instruction_prompt.get_prompt(),
             mcp_servers=[feishu_mcp_server],
-            deps_type=JiraUserStory,
+            deps_type=_GenerationRunState,
             description="Agent which generates test cases based on requirement documents.",
             tools=[self._generate_test_cases],
         )
@@ -99,17 +105,18 @@ class TestCaseGenerationAgent(AgentBase):
         ]
 
     async def _generate_test_cases(
-        self, requirement_doc_content: str, attachment_paths: list[str]
+        self, ctx: RunContext[_GenerationRunState], requirement_doc_content: str, attachment_paths: list[str]
     ) -> str:
         """
         Generates test cases based on the requirement document content and attachments.
 
         Args:
+            ctx: Run context providing access to per-request state.
             requirement_doc_content: The whole content of the requirement document.
             attachment_paths: List of file paths to the downloaded attachments.
 
         Returns:
-            Summary string; full result is stored in _generation_result_ctx for run() to retrieve.
+            Summary string; full result is stored in ctx.deps for run() to retrieve.
         """
         attachments_content = self._fetch_attachments(attachment_paths)
         extracted_acceptance_criteria = await self.extract_acceptance_criteria(
@@ -118,25 +125,21 @@ class TestCaseGenerationAgent(AgentBase):
         generated_test_cases = await self.generate_test_cases_from_acs(
             extracted_acceptance_criteria, requirement_doc_content
         )
-        _generation_result_ctx.get().append(generated_test_cases)
+        ctx.deps.result = generated_test_cases
         return f"Successfully generated {len(generated_test_cases.test_cases)} test cases."
 
     async def run(self, received_message: Message) -> Message:
-        holder: list[GeneratedTestCases] = []
-        token = _generation_result_ctx.set(holder)
-        try:
-            result_message = await super().run(received_message)
-            if not holder:
-                return result_message
-            context_id = getattr(received_message, "context_id", None)
-            task_id = getattr(received_message, "task_id", None)
-            return new_text_message(
-                text=holder[0].model_dump_json(),
-                context_id=context_id,
-                task_id=task_id,
-            )
-        finally:
-            _generation_result_ctx.reset(token)
+        state = _GenerationRunState()
+        result_message = await super().run(received_message, deps=state)
+        if state.result is None:
+            return result_message
+        context_id = getattr(received_message, "context_id", None)
+        task_id = getattr(received_message, "task_id", None)
+        return new_text_message(
+            text=state.result.model_dump_json(),
+            context_id=context_id,
+            task_id=task_id,
+        )
 
     async def _generate_test_cases_for_ac_batch(
         self,

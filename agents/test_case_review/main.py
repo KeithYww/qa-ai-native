@@ -4,7 +4,7 @@
 
 import asyncio
 import json
-from contextvars import ContextVar
+from dataclasses import dataclass, field
 from itertools import batched
 from typing import TYPE_CHECKING
 
@@ -26,9 +26,14 @@ if TYPE_CHECKING:
 
 logger = utils.get_logger("test_case_review_agent")
 
-_test_cases_ctx: ContextVar[list | None] = ContextVar("_review_test_cases_ctx", default=None)
-_doc_content_ctx: ContextVar[str] = ContextVar("_review_doc_content_ctx", default="")
-_review_result_ctx: ContextVar[list[TestCaseReviewFeedbacks]] = ContextVar("_review_result_ctx")
+
+@dataclass(slots=True)
+class _ReviewRunState:
+    """Per-request state container for TestCaseReviewAgent, threaded via pydantic-ai deps."""
+
+    test_cases: list = field(default_factory=list)
+    doc_content: str = ""
+    result: TestCaseReviewFeedbacks | None = None
 
 
 def _extract_doc_content_from_text(text: str) -> str:
@@ -99,7 +104,7 @@ class TestCaseReviewAgent(AgentBase):
             protocol=config.TestCaseReviewAgentConfig.PROTOCOL,
             model_name=config.TestCaseReviewAgentConfig.MODEL_NAME,
             fallback_model_name=config.TestCaseReviewAgentConfig.FALLBACK_MODEL_NAME,
-            deps_type=TestCaseReviewRequest,
+            deps_type=_ReviewRunState,
             output_type=TestCaseReviewFeedbacks,
             instructions=instruction_prompt.get_prompt(),
             mcp_servers=[],
@@ -117,8 +122,8 @@ class TestCaseReviewAgent(AgentBase):
         return config.TestCaseReviewAgentConfig.TOTAL_TOKENS_LIMIT_PER_TASK
 
     def get_max_tokens(self) -> int | None:
-        # The main orchestrating LLM's output is discarded in favour of the ContextVar
-        # side-channel result, so a small limit is sufficient and leaves more room for input.
+        # The main orchestrating LLM only emits a short summary; the full result travels
+        # via deps, so a small limit is sufficient and leaves more room for input.
         return 4096
 
     def get_skills(self) -> list[AgentSkill]:
@@ -136,13 +141,12 @@ class TestCaseReviewAgent(AgentBase):
         test_cases = _parse_test_cases_from_text(text)
         context_id = getattr(received_message, "context_id", None)
         task_id = getattr(received_message, "task_id", None)
+        state = _ReviewRunState()
         if test_cases:
-            _test_cases_ctx.set(test_cases)
-            doc_content = _extract_doc_content_from_text(text)
-            if doc_content:
-                _doc_content_ctx.set(doc_content)
+            state.test_cases = test_cases
+            state.doc_content = _extract_doc_content_from_text(text)
             # Pass only a minimal instruction to the main LLM — both test cases and
-            # doc content are in ContextVars and do not need to travel through the LLM.
+            # doc content travel via deps, not through the LLM context window.
             received_message = new_text_message(
                 text="Review the test cases using the requirement document.",
                 context_id=context_id,
@@ -150,29 +154,24 @@ class TestCaseReviewAgent(AgentBase):
             )
         else:
             logger.warning("Could not extract test cases from review request message.")
-        holder: list[TestCaseReviewFeedbacks] = []
-        token = _review_result_ctx.set(holder)
-        try:
-            msg = await super().run(received_message)
-            if not holder:
-                return msg
-            return new_text_message(text=holder[0].model_dump_json(), context_id=context_id, task_id=task_id)
-        finally:
-            _review_result_ctx.reset(token)
+        msg = await super().run(received_message, deps=state)
+        if state.result is None:
+            return msg
+        return new_text_message(text=state.result.model_dump_json(), context_id=context_id, task_id=task_id)
 
-    async def _review_test_cases_with_attachments(self, ctx: RunContext[TestCaseReviewRequest]) -> str:
+    async def _review_test_cases_with_attachments(self, ctx: RunContext[_ReviewRunState]) -> str:
         """
         Reviews all test cases from the request in batches, using the requirement document.
 
-        All inputs (test cases, doc content) are read from ContextVars set in run().
+        Reads test cases and doc content from ctx.deps; stores the result back in ctx.deps.result.
 
         Returns:
-            A compact completion summary (full feedbacks are stored in the ContextVar side-channel).
+            A compact completion summary.
         """
-        test_cases = _test_cases_ctx.get()
+        test_cases = ctx.deps.test_cases
         if not test_cases:
             raise RuntimeError("No test cases available for review.")
-        requirement_doc_content = _doc_content_ctx.get()
+        requirement_doc_content = ctx.deps.doc_content
         attachments_content = {}
         batch_size = config.TestCaseReviewAgentConfig.TEST_CASE_REVIEW_BATCH_SIZE
         batches = list(batched(test_cases, batch_size, strict=False))
@@ -190,11 +189,10 @@ class TestCaseReviewAgent(AgentBase):
             all_feedbacks.extend(result.review_feedbacks)
             if result.llm_comments:
                 llm_comments.append(result.llm_comments)
-        feedbacks = TestCaseReviewFeedbacks(
+        ctx.deps.result = TestCaseReviewFeedbacks(
             review_feedbacks=all_feedbacks,
             llm_comments="\n".join(llm_comments) or None,
         )
-        _review_result_ctx.get().append(feedbacks)
         return f"Review completed. Reviewed {len(all_feedbacks)} test cases."
 
     async def _review_batch(

@@ -2,23 +2,24 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import logging
 import threading
 
 import pytest
 
 from common.agent_log_capture import AgentLogCaptureHandler
+from common.streaming import current_log_handler
 
 
 @pytest.fixture
 def handler() -> AgentLogCaptureHandler:
     h = AgentLogCaptureHandler()
-    h.setFormatter(__import__("logging").Formatter("%(message)s"))
+    h.setFormatter(logging.Formatter("%(message)s"))
     return h
 
 
 def _emit(handler: AgentLogCaptureHandler, message: str) -> None:
-    import logging
-
+    """Emit a log record while binding the ContextVar to the given handler."""
     record = logging.LogRecord(
         name="test",
         level=logging.INFO,
@@ -28,7 +29,51 @@ def _emit(handler: AgentLogCaptureHandler, message: str) -> None:
         args=(),
         exc_info=None,
     )
-    handler.emit(record)
+    token = current_log_handler.set(handler)
+    try:
+        handler.emit(record)
+    finally:
+        current_log_handler.reset(token)
+
+
+def _make_record(message: str) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="test", level=logging.INFO, pathname="", lineno=0,
+        msg=message, args=(), exc_info=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ContextVar routing
+# ---------------------------------------------------------------------------
+
+
+def test_emit_drops_record_when_no_handler_bound(handler):
+    """emit() is a no-op when current_log_handler is not bound to this handler."""
+    handler.emit(_make_record("should be dropped"))
+    assert handler.drain() == []
+
+
+def test_emit_drops_record_when_bound_to_different_handler(handler):
+    """emit() is a no-op when current_log_handler is bound to a different handler."""
+    other = AgentLogCaptureHandler()
+    token = current_log_handler.set(other)
+    try:
+        handler.emit(_make_record("should be dropped"))
+    finally:
+        current_log_handler.reset(token)
+    assert handler.drain() == []
+
+
+def test_emit_stores_record_when_bound_to_this_handler(handler):
+    """emit() captures the record when current_log_handler is bound to this handler."""
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    token = current_log_handler.set(handler)
+    try:
+        handler.emit(_make_record("captured"))
+    finally:
+        current_log_handler.reset(token)
+    assert handler.drain() == ["captured"]
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +109,6 @@ def test_drain_second_call_empty_when_no_new_lines(handler):
 
 
 def test_drain_keeps_working_after_buffer_overflows():
-    import logging
-
     handler = AgentLogCaptureHandler(max_records=3)
     handler.setFormatter(logging.Formatter("%(message)s"))
 
@@ -89,6 +132,9 @@ def test_concurrent_emit_and_drain_is_race_free(handler):
     errors: list[Exception] = []
     collected: list[str] = []
     lock = threading.Lock()
+
+    # Bind the ContextVar in the main thread before spawning so threads inherit it.
+    main_token = current_log_handler.set(handler)
 
     def emitter():
         try:
@@ -114,9 +160,14 @@ def test_concurrent_emit_and_drain_is_race_free(handler):
     for t in threads:
         t.join()
 
+    current_log_handler.reset(main_token)
+
     # Final drain to capture any remaining lines
     with lock:
+        # Re-bind to drain remaining
+        token = current_log_handler.set(handler)
         collected.extend(handler.drain())
+        current_log_handler.reset(token)
 
     assert errors == [], f"Threads raised: {errors}"
     # All emitted lines fit within maxlen; drain collects everything exactly once

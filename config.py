@@ -166,6 +166,8 @@ class OrchestratorConfig:
     # submission rate cap, both in-memory.
     REQUIREMENT_REVIEW_DEDUP_WINDOW_SECONDS = float(os.environ.get("REQUIREMENT_REVIEW_DEDUP_WINDOW_SECONDS", "300"))
     REQUIREMENT_REVIEW_MAX_PER_MINUTE = int(os.environ.get("REQUIREMENT_REVIEW_MAX_PER_MINUTE", "5"))
+    # Maximum number of concurrent tasks a single agent process can handle safely.
+    MAX_SLOTS_PER_AGENT = int(os.environ.get("MAX_SLOTS_PER_AGENT", "3"))
 
 
 # Dashboard Authentication

@@ -1850,12 +1850,12 @@ async def reserve_agent_waiting_if_needed(
             if available_agent_ids:
                 agent_id = await _select_agent(task_description, available_agent_ids, task_id)
                 if agent_id:
-                    # Double-check agent is still available (might have changed during _select_agent)
-                    current_status = await agent_registry.get_status(agent_id)
-                    if current_status == AgentStatus.AVAILABLE:
+                    # Double-check agent still has a free slot (may have changed during _select_agent)
+                    re_checked_ids = await agent_registry.get_available_agents()
+                    if agent_id in re_checked_ids:
                         agent_card = await agent_registry.get_card(agent_id)
                         if agent_card:
-                            # Atomically mark as BUSY before releasing the lock
+                            # Atomically increment slot count (BUSY) before releasing the lock
                             await agent_registry.update_status(agent_id, AgentStatus.BUSY)
                             agent_name = await agent_registry.get_name(agent_id)
                             logger.info(

@@ -9,7 +9,7 @@ import pytest
 from a2a.helpers import new_text_message
 from a2a.types import Role
 
-from agents.test_case_review.main import TestCaseReviewAgent, _parse_test_cases_from_text
+from agents.test_case_review.main import TestCaseReviewAgent, _ReviewRunState, _parse_test_cases_from_text
 from common.models import TestCase, TestCaseReviewFeedback, TestCaseReviewFeedbacks, TestStep
 
 
@@ -47,17 +47,21 @@ def test_agent_init(agent, mock_config):
 
 @pytest.mark.asyncio
 async def test_run_returns_result_set_by_tool_in_separate_task(agent):
-    """Reproduces pydantic-ai's real tool-execution model, where each tool call runs in its
-    own asyncio.Task (a copy of the caller's contextvars.Context). A ContextVar mutation made
-    inside that task must reach run() via the shared holder object, not via ContextVar.set()."""
+    """The tool writes ctx.deps.result; run() reads it back even when the tool runs in a
+    separate asyncio.Task (as pydantic-ai does), because deps is a mutable object shared
+    by reference — not a ContextVar copy."""
     expected_feedbacks = TestCaseReviewFeedbacks(
         review_feedbacks=[TestCaseReviewFeedback(test_case_id="TC-1", review_feedback=["Looks good"])]
     )
 
-    async def fake_super_run(received_message):
-        task = asyncio.create_task(
-            agent._review_test_cases_with_attachments(ctx=MagicMock())
-        )
+    async def fake_super_run(received_message, deps=None):
+        # Simulate pydantic-ai running the tool in a child task.
+        # The child inherits the deps reference (mutable object), so mutations
+        # in the child are visible in the parent context without any ContextVar tricks.
+        async def _tool():
+            deps.result = expected_feedbacks
+
+        task = asyncio.create_task(_tool())
         await task
         return new_text_message(text="fallback", role=Role.ROLE_AGENT)
 
@@ -71,6 +75,26 @@ async def test_run_returns_result_set_by_tool_in_separate_task(agent):
         result = await agent.run(received_message)
 
     assert TestCaseReviewFeedbacks.model_validate_json(result.parts[0].text) == expected_feedbacks
+
+
+@pytest.mark.asyncio
+async def test_run_falls_back_when_tool_never_sets_result(agent):
+    """When the tool is never invoked (no test cases parsed), state.result stays None and
+    run() returns the raw LLM message rather than attempting to parse feedbacks."""
+    fallback_message = new_text_message(text="fallback", role=Role.ROLE_AGENT)
+
+    async def fake_super_run(received_message, deps=None):
+        # Tool is never called; deps.result stays None.
+        return fallback_message
+
+    with (
+        patch("agents.test_case_review.main.AgentBase.run", side_effect=fake_super_run),
+        patch("agents.test_case_review.main._parse_test_cases_from_text", return_value=[]),
+    ):
+        received_message = new_text_message(text="no test cases here", role=Role.ROLE_USER)
+        result = await agent.run(received_message)
+
+    assert result is fallback_message
 
 
 def _make_tc_json(name: str = "TC-1") -> str:

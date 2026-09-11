@@ -6,6 +6,7 @@
 Streaming primitives for SSE event payloads and log handler ContextVar.
 """
 
+import asyncio
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from common.agent_log_capture import AgentLogCaptureHandler
 
 # ---------------------------------------------------------------------------
-# ContextVar
+# ContextVars
 # ---------------------------------------------------------------------------
 
 current_log_handler: ContextVar["AgentLogCaptureHandler | None"] = ContextVar("current_log_handler", default=None)
@@ -29,6 +30,26 @@ def set_current_log_handler(handler: "AgentLogCaptureHandler") -> Token:
 def reset_current_log_handler(token: Token) -> None:
     """Reset the log handler binding using the token returned by set_current_log_handler."""
     current_log_handler.reset(token)
+
+
+# Per-request activity queue: executor binds a fresh queue before each agent.run(); the
+# agent's report_activity reads from this ContextVar so concurrent tasks route their
+# activity updates to the correct queue.
+# Routing relies on asyncio Task context inheritance. threading.Thread callers will see
+# None here and report_activity will fall back to the agent's instance queue.
+current_activity_queue: ContextVar["asyncio.Queue[str] | None"] = ContextVar(
+    "current_activity_queue", default=None
+)
+
+
+def set_current_activity_queue(queue: "asyncio.Queue[str]") -> Token:
+    """Bind per-request activity queue to the current context; returns a reset token."""
+    return current_activity_queue.set(queue)
+
+
+def reset_current_activity_queue(token: Token) -> None:
+    """Reset the activity queue binding using the token returned by set_current_activity_queue."""
+    current_activity_queue.reset(token)
 
 
 # ---------------------------------------------------------------------------

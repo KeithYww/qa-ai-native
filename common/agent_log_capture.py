@@ -13,6 +13,8 @@ import logging
 import threading
 from collections import deque
 
+from common.streaming import current_log_handler
+
 
 class AgentLogCaptureHandler(logging.Handler):
     """
@@ -31,7 +33,20 @@ class AgentLogCaptureHandler(logging.Handler):
         self.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Store the formatted log record in the buffer."""
+        """Store the formatted log record in the buffer.
+
+        Only captures records when the current asyncio Task context is bound to
+        this handler via the current_log_handler ContextVar. This ensures that
+        concurrent tasks with separate handlers do not cross-contaminate each
+        other's log buffers.
+
+        Note: this routing relies on asyncio Task context inheritance. Log calls
+        from threading.Thread will see current_log_handler=None and be silently
+        dropped — this is an intentional trade-off documented here to prevent
+        future callers from being surprised.
+        """
+        if current_log_handler.get(None) is not self:
+            return
         try:
             log_entry = self.format(record)
             with self._lock:
