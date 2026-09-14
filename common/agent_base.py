@@ -93,6 +93,7 @@ class AgentBase(ABC):
             + "\nA `report_activity` tool is available — call it before any other tool call or reasoning phase."
         )
         self.agent = self._create_agent()
+        self._mcp_managed_agents: list[Agent] = [self.agent]
         self.a2a_server = self._get_server()
 
         self.vector_db_service = None
@@ -325,7 +326,8 @@ class AgentBase(ABC):
         stack = AsyncExitStack()
         for attempt in range(config.RetryConfig.MAX_RETRIES):
             try:
-                await stack.enter_async_context(self.agent)
+                for managed_agent in self._mcp_managed_agents:
+                    await stack.enter_async_context(managed_agent)
                 break
             except Exception as exc:
                 await stack.aclose()

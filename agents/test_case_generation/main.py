@@ -87,6 +87,10 @@ class TestCaseGenerationAgent(AgentBase):
             description="Agent which generates test cases based on requirement documents.",
             tools=[self._generate_test_cases],
         )
+        # ac_extractor_agent holds its own MCP toolset (feishu_mcp_server), separate from
+        # the outer agent's (empty) mcp_servers, so it must be registered here too to get
+        # the lifespan-held connection protection from AgentBase._lifespan.
+        self._mcp_managed_agents.append(self.ac_extractor_agent)
 
     def get_thinking_level(self) -> ThinkingLevel:
         return config.TestCaseGenerationAgentConfig.ORCHESTRATOR_THINKING_LEVEL
