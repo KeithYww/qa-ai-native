@@ -815,7 +815,8 @@ async def _run_requirement_review(work_item_id: str, project_key: str, feishu_do
         logger.info(f"Requirements review completed for work item {work_item_id}.")
     except Exception as e:
         _record_error(f"Requirements review for work item {work_item_id} failed: {e}")
-        logger.error(f"Requirements review for work item {work_item_id} failed: {e}", exc_info=True)
+        logger.error(f"Requirements review for work item {work_item_id} failed: {e}",
+                     exc_info=True, extra={"work_item_id": work_item_id})
 
 
 # noinspection PyUnusedLocal
@@ -858,7 +859,8 @@ async def _run_pipeline(story_id: str, project_key: str, feishu_doc: str) -> Non
         logger.info(f"Pipeline for story {story_id} completed successfully.")
     except Exception as e:
         _record_error(f"Pipeline for story {story_id} failed: {e}")
-        logger.error(f"Pipeline for story {story_id} failed: {e}", exc_info=True)
+        logger.error(f"Pipeline for story {story_id} failed: {e}",
+                     exc_info=True, extra={"story_id": story_id})
 
 
 async def _pipeline_consumer() -> None:
@@ -1118,7 +1120,8 @@ async def _agent_worker(
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.exception(f"Error in worker for agent {agent_id}.")
+                logger.exception(f"Error in worker for agent {agent_id}.",
+                                  extra={"agent_id": agent_id})
                 # Mark agent as BROKEN - task execution failed
                 await agent_registry.update_status(agent_id, AgentStatus.BROKEN, BrokenReason.TASK_STUCK)
                 # Hand the agent to the recovery task (matches the other BROKEN sites).
@@ -1192,7 +1195,8 @@ Test case execution results:\n```{text_results}```
         if not test_execution_result:
             raise ValueError("Couldn't map the test execution results received from the agent to the expected format.")
     except Exception as e:
-        logger.error(f"Results extraction failed for test case {test_case.key}: {e}")
+        logger.error(f"Results extraction failed for test case {test_case.key}: {e}",
+                     extra={"task_id": test_case.key})
         return TestExecutionResult(
             stepResults=[],
             testCaseKey=test_case.key,
@@ -1256,7 +1260,8 @@ async def _request_incident_creation(
     result = _get_model_from_artifacts(received_artifacts, task_description, IncidentCreationResult)
 
     if isinstance(result, AgentExecutionError):
-        logger.error(f"Incident creation failed for test case {incident_input.test_case.key}: {result.error_message}")
+        logger.error(f"Incident creation failed for test case {incident_input.test_case.key}: {result.error_message}",
+                     extra={"task_id": incident_input.test_case.key})
         return None
 
     return result

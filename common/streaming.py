@@ -53,6 +53,21 @@ def reset_current_activity_queue(token: Token) -> None:
     current_activity_queue.reset(token)
 
 
+# Per-request task ID: set by executor so any logger in the call chain can emit it as a
+# structured field without threading it through the call stack.
+current_task_id: ContextVar["str | None"] = ContextVar("current_task_id", default=None)
+
+
+def set_current_task_id(task_id: str) -> Token:
+    """Bind task_id to the current context; returns a reset token."""
+    return current_task_id.set(task_id)
+
+
+def reset_current_task_id(token: Token) -> None:
+    """Reset the task_id binding."""
+    current_task_id.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # Budget helper
 # ---------------------------------------------------------------------------

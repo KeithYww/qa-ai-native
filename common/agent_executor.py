@@ -24,8 +24,10 @@ from common.models import AgentRuntimeError
 from common.streaming import (
     reset_current_activity_queue,
     reset_current_log_handler,
+    reset_current_task_id,
     set_current_activity_queue,
     set_current_log_handler,
+    set_current_task_id,
 )
 
 logger = utils.get_logger("agent_executor")
@@ -57,10 +59,12 @@ class DefaultAgentExecutor(AgentExecutor):
         root_logger.addHandler(log_handler)
         handler_token = set_current_log_handler(log_handler)
 
-        # Per-request activity queue: bound via ContextVar so report_activity routes
-        # updates to this task's updater, not to a shared queue on the agent instance.
+        # Per-request activity queue and task_id: both bound via ContextVar so that
+        # any logger in the call chain (including custom_llm_wrapper) can emit task_id
+        # as a structured field without threading it through the call stack.
         per_request_activity_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
         activity_token = set_current_activity_queue(per_request_activity_queue)
+        task_id_token = set_current_task_id(task_id)
 
         logs_artifact_id = str(uuid4())  # stable id correlating every log chunk for this task
         sent_any_logs = False
@@ -152,6 +156,7 @@ class DefaultAgentExecutor(AgentExecutor):
                 reset_current_log_handler(handler_token)
                 root_logger.removeHandler(log_handler)
                 reset_current_activity_queue(activity_token)
+                reset_current_task_id(task_id_token)
                 handler_detached = True
 
             # 4. Execution-result artifact (auto-generated unique artifact_id avoids id collisions).
@@ -195,13 +200,14 @@ class DefaultAgentExecutor(AgentExecutor):
             await updater.failed(message=new_text_message(str(e)))
 
         except Exception as e:
-            logger.exception(f"Error executing task {task_id}: {e}")
+            logger.exception(f"Error executing task {task_id}: {e}", extra={"task_id": task_id})
             await updater.failed(message=new_text_message(f"An error occurred: {e!s}"))
         finally:
             if not handler_detached:
                 reset_current_log_handler(handler_token)
                 root_logger.removeHandler(log_handler)
                 reset_current_activity_queue(activity_token)
+                reset_current_task_id(task_id_token)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
