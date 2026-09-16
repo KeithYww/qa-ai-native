@@ -59,9 +59,9 @@ def _classify_prd(content: str) -> Literal["ac_list", "functional", "narrative"]
     """Classify a PRD by type to select the appropriate chunking strategy.
 
     Returns:
-        "ac_list"    – PRD contains an explicit acceptance-criteria list.
-        "functional" – PRD is structured with numbered sections (no explicit AC list).
-        "narrative"  – No detectable structure; fall back to LLM-based AC derivation.
+        "ac_list"    - PRD contains an explicit acceptance-criteria list.
+        "functional" - PRD is structured with numbered sections (no explicit AC list).
+        "narrative"  - No detectable structure; fall back to LLM-based AC derivation.
     """
     if any(signal in content for signal in _AC_SIGNALS):
         return "ac_list"
