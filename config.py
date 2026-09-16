@@ -210,6 +210,14 @@ class TestCaseClassificationAgentConfig:
 
 
 # Test Case Generation Agent
+class PrdClassifierConfig:
+    """Thresholds for PRD type classification and section chunking."""
+
+    FUNCTIONAL_SECTION_THRESHOLD = int(os.environ.get("PRD_SECTION_THRESHOLD", "5"))
+    SECTION_MIN_CHARS = int(os.environ.get("PRD_SECTION_MIN_CHARS", "300"))
+    SECTION_MAX_CHARS = int(os.environ.get("PRD_SECTION_MAX_CHARS", "3000"))
+
+
 class TestCaseGenerationAgentConfig:
     AC_EXTRACTOR_THINKING_LEVEL: ThinkingLevel = "minimal"
     TC_GENERATOR_THINKING_LEVEL: ThinkingLevel = "low"
@@ -242,7 +250,7 @@ class TestCaseReviewAgentConfig:
     FALLBACK_MODEL_NAME = "deepseek-v4-flash"
     MAX_REQUESTS_PER_TASK = 30
     TEST_CASE_REVIEW_BATCH_SIZE = 10
-    MAX_TOKENS = 16000
+    MAX_TOKENS = int(os.environ.get("TC_REVIEW_MAX_TOKENS", "32000"))
     TOTAL_TOKENS_LIMIT_PER_TASK = 4_000_000
 
 

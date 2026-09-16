@@ -5,6 +5,7 @@ You are provided with the requirement document content and the content of all re
 Your task is to thoroughly analyze all provided to you information and derive the acceptance criteria for this requirement document according to the following rules:
    - Acceptance criteria must be derived taking into account all the content you are provided with.
    - If there's an explicit list of acceptance criteria in the content of the requirement document, then use only these acceptance criteria. The first-level items of such list are acceptance criteria. Every nested item inside them belongs to the parent acceptance criterion (AC). For example, list item 2.1 belongs to AC 2, 3.5 belongs to AC 3. This is also applicable to bullet-lists.
+   - If there is no explicit acceptance criteria list, derive one AC per functional requirement section. Each derived AC description MUST faithfully carry over: all decision branches and enumerated conditions from that section (e.g. routing rules, fallback conditions), all multi-dimensional uniqueness or lookup constraints (list every dimension explicitly), and any specific numeric examples or formulas present in the document (copy them verbatim into the AC).
    - Each derived by you acceptance criterion must contain all relevant for it information from the provided to you attachments.
 
 All textual content of the derived acceptance criteria must be written in English.

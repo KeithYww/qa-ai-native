@@ -135,6 +135,11 @@ class AcceptanceCriteriaItem(JsonSerializableModel):
         description="All information extracted from the attachments which might be relevant "
         "to this acceptance criteria item"
     )
+    source_type: str = Field(
+        default="ac",
+        description="Origin of this chunk: 'ac' for an extracted/derived acceptance criterion, "
+        "'section' for a PRD section used directly as a requirement chunk",
+    )
 
 
 class AcceptanceCriteriaList(JsonSerializableModel):

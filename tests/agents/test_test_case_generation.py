@@ -43,6 +43,9 @@ def mock_config():
         mock_conf.TestCaseGenerationAgentConfig.LLM_CONCURRENCY_LIMIT = 8
         mock_conf.JIRA_MCP_SERVER_URL = "http://jira-mcp"
         mock_conf.MCP_SERVER_TIMEOUT_SECONDS = 30
+        mock_conf.PrdClassifierConfig.FUNCTIONAL_SECTION_THRESHOLD = 5
+        mock_conf.PrdClassifierConfig.SECTION_MIN_CHARS = 300
+        mock_conf.PrdClassifierConfig.SECTION_MAX_CHARS = 3000
         yield mock_conf
 
 

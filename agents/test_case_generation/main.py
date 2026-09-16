@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import asyncio
+import re
 from dataclasses import dataclass
 from itertools import batched
+from typing import Literal
 
 from a2a.helpers import new_text_message
 from a2a.types import AgentSkill, Message
@@ -32,6 +34,153 @@ from common.services.test_management_system_client_provider import get_test_mana
 
 logger = utils.get_logger("test_case_generation_agent")
 feishu_mcp_server = MCPServerSSE(url=config.FEISHU_MCP_SERVER_URL, timeout=config.MCP_SERVER_TIMEOUT_SECONDS)
+
+_AC_SIGNALS = ("验收标准", "Acceptance Criteria", "acceptance criteria")
+_SECTION_NUMBER_RE = re.compile(r"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)")
+_HTML_HEADING_RE = re.compile(r"<h[23][^>]*>(.*?)</h[23]>", re.IGNORECASE | re.DOTALL)
+_NUMBERED_TITLE_RE = re.compile(r"^(\d+(?:\.\d+)+)\s+(.+)$", re.MULTILINE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+@dataclass(slots=True)
+class _Section:
+    """Internal representation of a PRD section before it becomes a chunk."""
+
+    section_id: str
+    title: str
+    content: str
+
+    @property
+    def char_count(self) -> int:
+        return len(self.content)
+
+
+def _classify_prd(content: str) -> Literal["ac_list", "functional", "narrative"]:
+    """Classify a PRD by type to select the appropriate chunking strategy.
+
+    Returns:
+        "ac_list"    – PRD contains an explicit acceptance-criteria list.
+        "functional" – PRD is structured with numbered sections (no explicit AC list).
+        "narrative"  – No detectable structure; fall back to LLM-based AC derivation.
+    """
+    if any(signal in content for signal in _AC_SIGNALS):
+        return "ac_list"
+    if len(_SECTION_NUMBER_RE.findall(content)) >= config.PrdClassifierConfig.FUNCTIONAL_SECTION_THRESHOLD:
+        return "functional"
+    return "narrative"
+
+
+def _strip_html(text: str) -> str:
+    return _HTML_TAG_RE.sub(" ", text).strip()
+
+
+def _parse_sections_from_html(html: str) -> list[_Section]:
+    """Extract sections from lark-cli HTML output using heading tags."""
+    sections: list[_Section] = []
+    parts = _HTML_HEADING_RE.split(html)
+    # parts layout: [text_before_h1, heading_text, body_after_heading, ...]
+    i = 1
+    while i < len(parts) - 1:
+        raw_title = _strip_html(parts[i])
+        body = _strip_html(parts[i + 1])
+        # Derive section id from leading number pattern in the title
+        m = re.match(r"(\d+(?:\.\d+)*)", raw_title)
+        section_id = m.group(1) if m else f"sec-{len(sections) + 1}"
+        sections.append(_Section(section_id=section_id, title=raw_title, content=body))
+        i += 2
+    return sections
+
+
+def _parse_sections_from_text(text: str) -> list[_Section]:
+    """Fallback: extract numbered sections from plain text."""
+    matches = list(_NUMBERED_TITLE_RE.finditer(text))
+    sections: list[_Section] = []
+    for idx, match in enumerate(matches):
+        section_id = match.group(1)
+        title = match.group(2).strip()
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        sections.append(_Section(section_id=section_id, title=title, content=text[start:end].strip()))
+    return sections
+
+
+def _merge_short_sections(sections: list[_Section], min_chars: int) -> list[_Section]:
+    """Merge sections below min_chars into the previous section."""
+    if not sections:
+        return sections
+    merged: list[_Section] = [sections[0]]
+    for sec in sections[1:]:
+        if sec.char_count < min_chars:
+            prev = merged[-1]
+            merged[-1] = _Section(
+                section_id=prev.section_id,
+                title=prev.title,
+                content=f"{prev.content}\n\n### {sec.title}\n{sec.content}",
+            )
+        else:
+            merged.append(sec)
+    return merged
+
+
+def _split_long_sections(sections: list[_Section], max_chars: int) -> list[_Section]:
+    """Split sections above max_chars on sub-heading boundaries."""
+    result: list[_Section] = []
+    for sec in sections:
+        if sec.char_count <= max_chars:
+            result.append(sec)
+            continue
+        # Split on sub-numbered lines within the body
+        sub_matches = list(_NUMBERED_TITLE_RE.finditer(sec.content))
+        if not sub_matches:
+            result.append(sec)
+            continue
+        # First chunk: content before first sub-heading
+        preamble = sec.content[: sub_matches[0].start()].strip()
+        if preamble:
+            result.append(_Section(section_id=sec.section_id, title=sec.title, content=preamble))
+        for i, m in enumerate(sub_matches):
+            sub_id = m.group(1)
+            sub_title = m.group(2).strip()
+            sub_start = m.end()
+            sub_end = sub_matches[i + 1].start() if i + 1 < len(sub_matches) else len(sec.content)
+            result.append(
+                _Section(
+                    section_id=sub_id,
+                    title=sub_title,
+                    content=sec.content[sub_start:sub_end].strip(),
+                )
+            )
+    return result
+
+
+def _chunk_by_sections(content: str) -> AcceptanceCriteriaList:
+    """Convert a functional PRD into requirement chunks keyed by section number."""
+    sections = _parse_sections_from_html(content)
+    if not sections:
+        logger.info("HTML section parsing yielded no sections; falling back to text parsing.")
+        sections = _parse_sections_from_text(content)
+
+    min_chars = config.PrdClassifierConfig.SECTION_MIN_CHARS
+    max_chars = config.PrdClassifierConfig.SECTION_MAX_CHARS
+    sections = _merge_short_sections(sections, min_chars)
+    sections = _split_long_sections(sections, max_chars)
+
+    logger.info(
+        f"Section chunker produced {len(sections)} chunks "
+        f"(min_chars={min_chars}, max_chars={max_chars})."
+    )
+    return AcceptanceCriteriaList(
+        items=[
+            AcceptanceCriteriaItem(
+                id=s.section_id,
+                text=f"{s.title}\n\n{s.content}",
+                attachment_info="",
+                source_type="section",
+            )
+            for s in sections
+            if s.content.strip()
+        ]
+    )
 
 
 @dataclass(slots=True)
@@ -114,6 +263,9 @@ class TestCaseGenerationAgent(AgentBase):
         """
         Generates test cases based on the requirement document content and attachments.
 
+        Classifies the PRD type first, then routes to the appropriate chunking
+        strategy before TC generation.  Stores the result in ctx.deps.result.
+
         Args:
             ctx: Run context providing access to per-request state.
             requirement_doc_content: The whole content of the requirement document.
@@ -122,13 +274,17 @@ class TestCaseGenerationAgent(AgentBase):
         Returns:
             Summary string; full result is stored in ctx.deps for run() to retrieve.
         """
-        attachments_content = self._fetch_attachments(attachment_paths)
-        extracted_acceptance_criteria = await self.extract_acceptance_criteria(
-            attachments_content, requirement_doc_content
-        )
-        generated_test_cases = await self.generate_test_cases_from_acs(
-            extracted_acceptance_criteria, requirement_doc_content
-        )
+        doc_type = _classify_prd(requirement_doc_content)
+        logger.info(f"PRD classified as: '{doc_type}'")
+
+        match doc_type:
+            case "functional":
+                chunks = _chunk_by_sections(requirement_doc_content)
+            case _:
+                attachments_content = self._fetch_attachments(attachment_paths)
+                chunks = await self.extract_acceptance_criteria(attachments_content, requirement_doc_content)
+
+        generated_test_cases = await self.generate_test_cases_from_acs(chunks, requirement_doc_content)
         ctx.deps.result = generated_test_cases
         return f"Successfully generated {len(generated_test_cases.test_cases)} test cases."
 
