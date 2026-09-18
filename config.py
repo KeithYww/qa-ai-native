@@ -251,8 +251,8 @@ class TestCaseReviewAgentConfig:
     PORT = int(os.environ.get("PORT", "8004"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "claude-sonnet-5"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    MODEL_NAME = "gpt-5.6-terra"
+    FALLBACK_MODEL_NAME = "claude-sonnet-5"
     MAX_REQUESTS_PER_TASK = 30
     TEST_CASE_REVIEW_BATCH_SIZE = 10
     MAX_TOKENS = int(os.environ.get("TC_REVIEW_MAX_TOKENS", "32000"))
