@@ -148,6 +148,11 @@ class OrchestratorConfig:
     THINKING_LEVEL: ThinkingLevel = "low"
     AUTOMATED_TC_LABEL = "automated"
     AGENTS_DISCOVERY_INTERVAL_SECONDS = 300
+    # Initial discovery (at orchestrator startup) races the other in-process agents' uvicorn
+    # startup in the all-in-one deployment (all launched concurrently). A short bounded retry
+    # here closes that window in seconds instead of waiting for the next periodic cycle.
+    INITIAL_DISCOVERY_MAX_ATTEMPTS = 5
+    INITIAL_DISCOVERY_RETRY_DELAY_SECONDS = 2.0
     AGENT_HEALTH_CHECK_INTERVAL_SECONDS = 60
     AGENT_HEALTH_CHECK_TIMEOUT_SECONDS = 10
     TASK_EXECUTION_TIMEOUT = float(os.environ.get("TASK_EXECUTION_TIMEOUT", "7200"))

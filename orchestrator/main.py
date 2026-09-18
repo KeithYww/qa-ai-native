@@ -139,7 +139,7 @@ async def lifespan(app: FastAPI):
     # Perform initial agent discovery before accepting requests
     logger.info("Starting initial agent discovery...")
     try:
-        await _discover_agents()
+        await _discover_agents_with_startup_retry()
         logger.info("Initial agent discovery finished.")
     except Exception as e:
         _record_error(f"Initial agent discovery failed: {e}")
@@ -2162,6 +2162,28 @@ async def _discover_agents():
 
     tasks = [_process_url_discovery(url) for url in set(remote_agent_urls)]
     await asyncio.gather(*tasks)
+
+
+async def _discover_agents_with_startup_retry() -> None:
+    """Runs _discover_agents() a few times with a short delay between attempts.
+
+    Only used for the initial, at-startup discovery: in the all-in-one deployment, the
+    orchestrator and the agents are separate uvicorn servers launched concurrently in the same
+    process (scripts/start_all.py), so the orchestrator can start probing an agent's port before
+    that agent has finished binding it. Stops early once two consecutive attempts register the
+    same number of agents (nothing new to wait for) — this also means an environment with zero
+    discoverable agents exits after just two attempts instead of using the full budget.
+    """
+    previous_count = -1
+    max_attempts = config.OrchestratorConfig.INITIAL_DISCOVERY_MAX_ATTEMPTS
+    for attempt in range(1, max_attempts + 1):
+        await _discover_agents()
+        current_count = len(await agent_registry.get_all_cards())
+        if current_count == previous_count:
+            return
+        previous_count = current_count
+        if attempt < max_attempts:
+            await asyncio.sleep(config.OrchestratorConfig.INITIAL_DISCOVERY_RETRY_DELAY_SECONDS)
 
 
 # =============================================================================

@@ -15,6 +15,7 @@ from orchestrator.main import (
     AgentStatus,
     BrokenReason,
     _discover_agents,
+    _discover_agents_with_startup_retry,
     _fetch_agent_card,
     _finalize_task,
     _get_agents_info,
@@ -108,6 +109,43 @@ async def test_discover_agents_success(clear_registry, mock_agent_card):
         cards = await agent_registry.get_all_cards()
         assert len(cards) == 1
         assert next(iter(cards.values())).name == "Discovered Agent"
+
+
+@pytest.mark.asyncio
+async def test_discover_agents_with_startup_retry_stops_once_converged(clear_registry, mock_agent_card):
+    """A late-binding peer registers on attempt 2; attempt 3 finds nothing new and stops
+    early instead of using the full attempt budget."""
+    call_count = 0
+
+    async def fake_discover():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            await agent_registry.register("late-agent", mock_agent_card)
+
+    with (
+        patch("orchestrator.main._discover_agents", side_effect=fake_discover),
+        patch("config.OrchestratorConfig.INITIAL_DISCOVERY_MAX_ATTEMPTS", 5),
+        patch("config.OrchestratorConfig.INITIAL_DISCOVERY_RETRY_DELAY_SECONDS", 0),
+    ):
+        await _discover_agents_with_startup_retry()
+
+    assert call_count == 3  # attempt 1: 0 -> attempt 2: 1 (new) -> attempt 3: 1 (converged, stop)
+    assert len(await agent_registry.get_all_cards()) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_agents_with_startup_retry_gives_up_fast_when_empty(clear_registry):
+    """Nothing is ever discoverable: two consecutive empty scans should stop early rather
+    than burning the full attempt budget."""
+    with (
+        patch("orchestrator.main._discover_agents", new_callable=AsyncMock) as mock_discover,
+        patch("config.OrchestratorConfig.INITIAL_DISCOVERY_MAX_ATTEMPTS", 5),
+        patch("config.OrchestratorConfig.INITIAL_DISCOVERY_RETRY_DELAY_SECONDS", 0),
+    ):
+        await _discover_agents_with_startup_retry()
+
+    assert mock_discover.call_count == 2
 
 
 @pytest.mark.asyncio
