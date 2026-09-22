@@ -148,13 +148,18 @@ class OrchestratorConfig:
     THINKING_LEVEL: ThinkingLevel = "low"
     AUTOMATED_TC_LABEL = "automated"
     AGENTS_DISCOVERY_INTERVAL_SECONDS = 300
+    # Initial discovery (at orchestrator startup) races the other in-process agents' uvicorn
+    # startup in the all-in-one deployment (all launched concurrently). A short bounded retry
+    # here closes that window in seconds instead of waiting for the next periodic cycle.
+    INITIAL_DISCOVERY_MAX_ATTEMPTS = 5
+    INITIAL_DISCOVERY_RETRY_DELAY_SECONDS = 2.0
     AGENT_HEALTH_CHECK_INTERVAL_SECONDS = 60
     AGENT_HEALTH_CHECK_TIMEOUT_SECONDS = 10
     TASK_EXECUTION_TIMEOUT = float(os.environ.get("TASK_EXECUTION_TIMEOUT", "7200"))
     AGENT_DISCOVERY_TIMEOUT_SECONDS = 120
     INCOMING_REQUEST_WAIT_TIMEOUT = AGENT_DISCOVERY_TIMEOUT_SECONDS + 5
-    MODEL_NAME = "claude-sonnet-5"
-    FALLBACK_MODEL_NAME = "gpt-5.6-terra"
+    MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     API_KEY = os.environ.get("ORCHESTRATOR_API_KEY")
     AGENT_DISCOVERY_PORTS = os.environ.get("AGENT_DISCOVERY_PORTS", "8001-8007")
     REMOTE_EXECUTION_AGENT_HOSTS = os.environ.get("REMOTE_EXECUTION_AGENT_HOSTS", AGENT_BASE_URL)
@@ -166,6 +171,11 @@ class OrchestratorConfig:
     # submission rate cap, both in-memory.
     REQUIREMENT_REVIEW_DEDUP_WINDOW_SECONDS = float(os.environ.get("REQUIREMENT_REVIEW_DEDUP_WINDOW_SECONDS", "300"))
     REQUIREMENT_REVIEW_MAX_PER_MINUTE = int(os.environ.get("REQUIREMENT_REVIEW_MAX_PER_MINUTE", "5"))
+    # Maximum number of concurrent tasks a single agent process can handle safely.
+    MAX_SLOTS_PER_AGENT = int(os.environ.get("MAX_SLOTS_PER_AGENT", "3"))
+    # Maximum number of pipelines dispatched concurrently by the orchestrator.
+    # Must be ≤ MAX_SLOTS_PER_AGENT to avoid overwhelming a single agent.
+    MAX_CONCURRENT_PIPELINES = int(os.environ.get("MAX_CONCURRENT_PIPELINES", "3"))
 
 
 # Dashboard Authentication
@@ -199,12 +209,20 @@ class TestCaseClassificationAgentConfig:
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
     MODEL_NAME = "deepseek-v4-flash"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     MAX_REQUESTS_PER_TASK = 30
     MAX_TOKENS = 16000
 
 
 # Test Case Generation Agent
+class PrdClassifierConfig:
+    """Thresholds for PRD type classification and section chunking."""
+
+    FUNCTIONAL_SECTION_THRESHOLD = int(os.environ.get("PRD_SECTION_THRESHOLD", "5"))
+    SECTION_MIN_CHARS = int(os.environ.get("PRD_SECTION_MIN_CHARS", "300"))
+    SECTION_MAX_CHARS = int(os.environ.get("PRD_SECTION_MAX_CHARS", "3000"))
+
+
 class TestCaseGenerationAgentConfig:
     AC_EXTRACTOR_THINKING_LEVEL: ThinkingLevel = "minimal"
     TC_GENERATOR_THINKING_LEVEL: ThinkingLevel = "low"
@@ -215,8 +233,8 @@ class TestCaseGenerationAgentConfig:
     PORT = int(os.environ.get("PORT", "8002"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "qwen3.8-flash"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    MODEL_NAME = "deepseek-v4-flash"
+    FALLBACK_MODEL_NAME = "qwen3.8-flash"
     MAX_REQUESTS_PER_TASK = 30
     # Read Phase 1 env var as fallback for zero-downtime migration
     AC_BATCH_SIZE = max(1, int(
@@ -227,28 +245,28 @@ class TestCaseGenerationAgentConfig:
 
 # Test Case Review Agent
 class TestCaseReviewAgentConfig:
-    THINKING_LEVEL: ThinkingLevel = "medium"
+    THINKING_LEVEL: ThinkingLevel = "low"
     REVIEW_COMPLETE_STATUS_NAME = "Review Complete"
     OWN_NAME = "Test Case Review Agent"
     PORT = int(os.environ.get("PORT", "8004"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "claude-sonnet-5"
-    FALLBACK_MODEL_NAME = "deepseek-v4-flash"
+    MODEL_NAME = "gpt-5.6-terra"
+    FALLBACK_MODEL_NAME = "claude-sonnet-5"
     MAX_REQUESTS_PER_TASK = 30
-    TEST_CASE_REVIEW_BATCH_SIZE = 5
-    MAX_TOKENS = 16000
+    TEST_CASE_REVIEW_BATCH_SIZE = 10
+    MAX_TOKENS = int(os.environ.get("TC_REVIEW_MAX_TOKENS", "32000"))
     TOTAL_TOKENS_LIMIT_PER_TASK = 4_000_000
 
 
 # Incident Creation Agent
 class IncidentCreationAgentConfig:
-    THINKING_LEVEL: ThinkingLevel = "medium"
+    THINKING_LEVEL: ThinkingLevel = "low"
     OWN_NAME = "Incident Creation Agent"
     PORT = int(os.environ.get("PORT", "8007"))
     EXTERNAL_PORT = int(os.environ.get("EXTERNAL_PORT", PORT))
     PROTOCOL = "http"
-    MODEL_NAME = "kimi-k3"
+    MODEL_NAME = "claude-sonnet-5"
     FALLBACK_MODEL_NAME = "deepseek-v4-flash"
     MAX_REQUESTS_PER_TASK = 30
     MIN_SIMILARITY_SCORE = float(os.environ.get("INCIDENT_AGENT_MIN_SIMILARITY_SCORE", "0.7"))

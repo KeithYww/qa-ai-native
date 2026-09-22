@@ -7,7 +7,7 @@ description: Adds new workflow endpoints to the QuAIA orchestrator. Use when cre
 
 # Adding a New Orchestrator Workflow
 
-This skill provides a comprehensive guide for adding new workflow endpoints to the QuAIA™ orchestrator. Workflows are FastAPI endpoints that trigger and coordinate agent tasks.
+This skill provides a comprehensive guide for adding new workflow endpoints to the QuAIA orchestrator. Workflows are FastAPI endpoints that trigger and coordinate agent tasks.
 
 ## Overview
 

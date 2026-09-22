@@ -93,6 +93,7 @@ class AgentBase(ABC):
             + "\nA `report_activity` tool is available — call it before any other tool call or reasoning phase."
         )
         self.agent = self._create_agent()
+        self._mcp_managed_agents: list[Agent] = [self.agent]
         self.a2a_server = self._get_server()
 
         self.vector_db_service = None
@@ -146,8 +147,11 @@ class AgentBase(ABC):
         any other tool. You may call it in parallel with other tool calls.
         Examples: "Fetching Jira issue PROJ-123", "Generating test steps for AC-2".
         """
+        from common.streaming import current_activity_queue
+
+        q = current_activity_queue.get(None) or self._activity_queue
         try:
-            self._activity_queue.put_nowait(description)
+            q.put_nowait(description)
         except asyncio.QueueFull:
             # No active consumer (e.g. standalone run) or the consumer fell behind:
             # drop the update rather than letting the queue grow without bound.
@@ -175,7 +179,9 @@ class AgentBase(ABC):
             output_retries=config.RetryConfig.MAX_RETRIES,
         )
 
-    async def _get_agent_execution_result(self, received_request: list[UserContent]) -> AgentRunResult[Any] | None:
+    async def _get_agent_execution_result(
+        self, received_request: list[UserContent], deps: Any = None
+    ) -> AgentRunResult[Any] | None:
         usage_limits = UsageLimits(
             tool_calls_limit=compute_activity_budget(self.get_max_requests_per_task()),
             total_tokens_limit=self.get_total_tokens_limit(),
@@ -184,8 +190,7 @@ class AgentBase(ABC):
             try:
                 logger.info(f"Starting agent run (attempt {attempt + 1}/{config.RetryConfig.MAX_RETRIES})...")
                 try:
-                    async with self.agent:
-                        return await self.agent.run(received_request, usage_limits=usage_limits)
+                    return await self.agent.run(received_request, deps=deps, usage_limits=usage_limits)
                 except ExceptionGroup as eg:
                     if any(isinstance(exc, httpx.ConnectError) for exc in eg.exceptions) and self.mcp_servers:
                         mcp_urls = [server.url for server in self.mcp_servers]
@@ -209,12 +214,12 @@ class AgentBase(ABC):
                     raise
         return None
 
-    async def run(self, received_message: Message) -> Message:
+    async def run(self, received_message: Message, deps: Any = None) -> Message:
         self.latest_received_message = received_message
         received_request = self._get_all_received_contents(received_message)
 
         try:
-            result = await self._get_agent_execution_result(received_request)
+            result = await self._get_agent_execution_result(received_request, deps=deps)
             self._capture_token_usage(result)
             self._capture_trace(result)
             self._log_llm_comments_if_result_incomplete(result.output)
@@ -309,12 +314,43 @@ class AgentBase(ABC):
     # noinspection PyUnusedLocal
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
+        from contextlib import AsyncExitStack
+
         logger.info(f"{self.agent_name} started.")
         logger.info(f"Using following MCP server URLs: {[server.url for server in self.mcp_servers]}")
-        yield
-        if self.vector_db_service:
-            await self.vector_db_service.close()
-        logger.info("Shutting down.")
+        # Enter the agent context once at startup so MCP connections are established
+        # in this (lifespan) task and held for the server's lifetime. Concurrent
+        # agent.run() calls then share a single live MCP session without re-entering
+        # the context, which would cause anyio cancel-scope cross-task errors.
+        # Retry to tolerate brief MCP startup delays in container environments.
+        stack = AsyncExitStack()
+        for attempt in range(config.RetryConfig.MAX_RETRIES):
+            try:
+                for managed_agent in self._mcp_managed_agents:
+                    await stack.enter_async_context(managed_agent)
+                break
+            except Exception as exc:
+                await stack.aclose()
+                stack = AsyncExitStack()
+                if attempt < config.RetryConfig.MAX_RETRIES - 1:
+                    delay = config.RetryConfig.RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
+                    logger.warning(
+                        f"MCP startup failed (attempt {attempt + 1}/{config.RetryConfig.MAX_RETRIES}): {exc}; "
+                        f"retrying in {delay:.0f}s"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"Agent '{self.agent_name}' failed to connect to MCP after "
+                        f"{config.RetryConfig.MAX_RETRIES} attempts"
+                    ) from exc
+        try:
+            yield
+        finally:
+            await stack.aclose()
+            if self.vector_db_service:
+                await self.vector_db_service.close()
+            logger.info("Shutting down.")
 
     @staticmethod
     def _fetch_attachments(attachment_paths: list[str]) -> dict[str, BinaryContent]:

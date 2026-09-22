@@ -23,9 +23,10 @@ class LogEntry:
     message: str
     task_id: str | None = None
     agent_id: str | None = None
+    error_type: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "timestamp": self.timestamp,
             "level": self.level,
             "logger": self.logger_name,
@@ -33,6 +34,9 @@ class LogEntry:
             "task_id": self.task_id,
             "agent_id": self.agent_id,
         }
+        if self.error_type:
+            d["error_type"] = self.error_type
+        return d
 
 
 class MemoryLogHandler(logging.Handler):
@@ -64,13 +68,17 @@ class MemoryLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """Store the log record in the buffer."""
         try:
+            # task_id can come from flat extra (new convention) or the legacy flat attribute
+            task_id = getattr(record, "task_id", None)
             entry = LogEntry(
                 timestamp=datetime.fromtimestamp(record.created).isoformat(),
                 level=record.levelname,
                 logger_name=record.name,
                 message=self.format(record),
-                task_id=getattr(record, "task_id", None),
+                task_id=task_id,
                 agent_id=getattr(record, "agent_id", None),
+                # Read exc_info directly — format() would swallow it into the message string
+                error_type=record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else None,
             )
             with self._buffer_lock:
                 self._buffer.append(entry)

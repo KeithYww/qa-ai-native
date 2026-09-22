@@ -17,10 +17,10 @@ import re
 import time
 
 import httpx
+from mcp.server.fastmcp import FastMCP
 
 import config
 from common import utils
-from mcp.server.fastmcp import FastMCP
 
 logger = utils.get_logger("feishu_mcp_server")
 

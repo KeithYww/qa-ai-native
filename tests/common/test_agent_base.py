@@ -143,7 +143,7 @@ async def test_usage_limits_tool_calls_limit_is_doubled(test_agent_instance):
     """tool_calls_limit must equal get_max_requests_per_task() * 2."""
     captured: list[UsageLimits] = []
 
-    async def fake_run(request, usage_limits=None):
+    async def fake_run(request, usage_limits=None, deps=None):
         captured.append(usage_limits)
         mock_result = MagicMock()
         mock_result.output = MockOutput(result="ok")
@@ -152,8 +152,6 @@ async def test_usage_limits_tool_calls_limit_is_doubled(test_agent_instance):
 
     test_agent_instance.agent = AsyncMock()
     test_agent_instance.agent.run = fake_run
-    test_agent_instance.agent.__aenter__.return_value = test_agent_instance.agent
-    test_agent_instance.agent.__aexit__.return_value = None
 
     with patch("common.agent_base.get_message_text", return_value="hello"):
         mock_message = MagicMock(spec=Message)
@@ -175,8 +173,6 @@ async def test_agent_run_success(test_agent_instance):
     # Mock the internal agent's run method
     test_agent_instance.agent = AsyncMock()
     test_agent_instance.agent.run.return_value = mock_run_result
-    test_agent_instance.agent.__aenter__.return_value = test_agent_instance.agent
-    test_agent_instance.agent.__aexit__.return_value = None
 
     mock_message = MagicMock(spec=Message)
     # Mocking get_message_text utility call which happens inside _get_all_received_contents

@@ -70,6 +70,7 @@ export interface TaskInfo {
   duration_ms: number | null;
   error_message: string | null;
   token_usage: TokenUsage | null;
+  result_summary: string | null;
 }
 
 export interface ErrorInfo {

@@ -106,7 +106,23 @@ class CustomLlmWrapper(WrapperModel):
         start_time = time.monotonic()
         response = await self.wrapped.request(messages, actual_settings, model_request_parameters)
         duration = time.monotonic() - start_time
-        logger.info(f"LLM request to '{self.wrapped_model_name}' completed in {duration:.3f}s")
+
+        # Emit structured LLM call log — task_id comes from ContextVar so it
+        # propagates without threading through the call stack.
+        from common.streaming import current_task_id as _current_task_id
+        try:
+            usage = response.usage()
+            extra: dict = {
+                "task_id":       _current_task_id.get(None),
+                "model":         self.wrapped_model_name,
+                "input_tokens":  usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "duration_ms":   int(duration * 1000),
+            }
+        except Exception:
+            extra = {"task_id": _current_task_id.get(None), "model": self.wrapped_model_name,
+                     "duration_ms": int(duration * 1000)}
+        logger.info(f"LLM request to '{self.wrapped_model_name}' completed in {duration:.3f}s", extra=extra)
         self._log_model_response(response)
         return response
 

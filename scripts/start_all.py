@@ -32,7 +32,7 @@ async def _main() -> None:
         )
         for _, app, port in _SERVICES
     ]
-    for (name, _, port), server in zip(_SERVICES, servers):
+    for (name, _, port), _server in zip(_SERVICES, servers, strict=True):
         logger.info("Starting %s on port %d", name, port)
     await asyncio.gather(*[s.serve() for s in servers])
 

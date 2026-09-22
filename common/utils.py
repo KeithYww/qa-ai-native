@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import json
 import logging
 import mimetypes
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dateutil import parser
@@ -18,6 +19,40 @@ from common.models import FileArtifact
 logging_initialized = False
 
 
+class JsonFormatter(logging.Formatter):
+    """Structured JSON formatter for ECS-compatible log ingestion (stdout/file → ES)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Derived from sys.argv[0] at process start — stable, no race condition
+        # in the single-process multi-service layout of start_all.py.
+        self._service = Path(sys.argv[0]).resolve().parent.name or "agentic-qa"
+
+    def format(self, record: logging.LogRecord) -> str:
+        doc: dict = {
+            "@timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "log.level":   record.levelname,
+            "log.logger":  record.name,
+            "service.name": self._service,
+            "message":     record.getMessage(),
+        }
+        # Structured error block — allows ES queries like error.type: "UnexpectedModelBehavior"
+        if record.exc_info and record.exc_info[0]:
+            doc["error"] = {
+                "type":        record.exc_info[0].__name__,
+                "message":     str(record.exc_info[1]),
+                "stack_trace": self.formatException(record.exc_info),
+            }
+        # Flat extra fields become top-level document fields for direct ES filtering.
+        # Compatible with MemoryLogHandler which reads task_id/agent_id via getattr(record, ...).
+        for field in ("task_id", "agent_id", "story_id", "work_item_id",
+                      "model", "input_tokens", "output_tokens", "duration_ms"):
+            val = getattr(record, field, None)
+            if val is not None:
+                doc[field] = val
+        return json.dumps(doc, ensure_ascii=False)
+
+
 def _initialize_logging():
     global logging_initialized
     if config.GOOGLE_CLOUD_LOGGING_ENABLED:
@@ -26,10 +61,15 @@ def _initialize_logging():
         client = google.cloud.logging.Client()
         client.setup_logging()
     else:
-        handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+        formatter = JsonFormatter()
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setFormatter(formatter)
+        handlers: list[logging.Handler] = [stdout_handler]
         if config.LOG_TO_FILE:
-            handlers.append(_build_file_log_handler())
-        logging.basicConfig(handlers=handlers, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            file_handler = _build_file_log_handler()
+            file_handler.setFormatter(formatter)
+            handlers.append(file_handler)
+        logging.basicConfig(handlers=handlers)
     logging_initialized = True
 
 

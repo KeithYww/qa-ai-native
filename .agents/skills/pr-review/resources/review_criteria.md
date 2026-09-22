@@ -1,6 +1,6 @@
 # PR Review Criteria
 
-This document defines the comprehensive review criteria for Python code in the QuAIA™ project. These criteria are
+This document defines the comprehensive review criteria for Python code in the QuAIA project. These criteria are
 derived from the project's AGENTS.md guidelines, Python best practices (PEP 8, PEP 257), and industry standards for
 secure, maintainable code.
 

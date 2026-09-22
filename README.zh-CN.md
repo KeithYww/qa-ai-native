@@ -1,8 +1,8 @@
-# QuAIA™ — 基于智能体的质量保障框架
+# QuAIA — 基于智能体的质量保障框架
 
 <img src="static/quaia_logo.png" alt="QuAIA Logo" width="50" style="margin-right: 15px; float:left">
 
-QuAIA™ 是一个开源框架,用于智能化自动执行软件测试生命周期中最重要的环节——从软件需求评审一直到生成测试执行报告。
+QuAIA 是一个开源框架,用于智能化自动执行软件测试生命周期中最重要的环节——从软件需求评审一直到生成测试执行报告。
 
 ## 功能特性
 
@@ -278,7 +278,7 @@ PROMPT_INJECTION_MODEL_NAME=ProtectAI/deberta-v3-base-prompt-injection-v2
 
 ### Jira MCP Server 设置
 
-QuAIA™ 框架通过一个 Model Context Protocol(MCP)server 与 Jira 集成。
+QuAIA 框架通过一个 Model Context Protocol(MCP)server 与 Jira 集成。
 
 1. **创建 `.env` 文件:**
    在 `mcp/jira/` 目录下创建 `.env` 文件:
@@ -642,7 +642,7 @@ Orchestrator 监听来自飞书项目自动化规则的 webhook,以启动自动�
 
 ## A2A 流式传输契约
 
-QuAIA™ 使用 A2A artifact 机制,在任务运行期间将实时更新从智能体推送到
+QuAIA 使用 A2A artifact 机制,在任务运行期间将实时更新从智能体推送到
 orchestrator 仪表盘。
 
 ### `report_activity` 工具
@@ -770,7 +770,7 @@ uv run pytest tests/common/
 
 ## 贡献
 
-我们欢迎为 QuAIA™ 做出贡献!请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 以了解
+我们欢迎为 QuAIA 做出贡献!请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 以了解
 贡献指南。
 
 ## 许可证

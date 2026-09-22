@@ -7,7 +7,7 @@ description: Writes unit tests for agents, orchestrator logic, and common utilit
 
 # Writing Unit Tests
 
-This skill provides a comprehensive guide for writing unit tests for the QuAIA™ framework, covering agents, orchestrator logic, and common utilities.
+This skill provides a comprehensive guide for writing unit tests for the QuAIA framework, covering agents, orchestrator logic, and common utilities.
 
 ## Overview
 

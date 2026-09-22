@@ -1,8 +1,8 @@
-# QuAIA™ — Quality Assurance with Intelligent Agents
+# QuAIA — Quality Assurance with Intelligent Agents
 
 <img src="static/quaia_logo.png" alt="QuAIA Logo" width="50" style="margin-right: 15px; float:left">
 
-QuAIA™ is an open-source framework for intelligent automation of the most important software testing life cycle 
+QuAIA is an open-source framework for intelligent automation of the most important software testing life cycle 
 processes starting with software requirements review and up to generating test execution reports.
 
 ## Features
@@ -18,8 +18,6 @@ processes starting with software requirements review and up to generating test e
 * **Feishu / Lark Integration:**
     * **Feishu MCP Server** (`scripts/feishu_mcp_server.py`) — reads PRD wiki and docx documents from Feishu, exposed as an MCP tool to agents.
     * **Feishu Project (Meego) write-back** — generated test cases are created as `test_cases` work items in a Feishu Project space, with review comments and status transitions applied by the review agent.
-* **Jira Integration:** Duplicate detection during incident creation still uses Jira via its MCP server; the RAG sync reads Jira issues via its REST API.
-* **Jira RAG Sync:** Keeps the Qdrant vector store in sync with Jira issues programmatically (triggered via `/update-rag-db`), without invoking an LLM agent.
 * **Dedicated Prompt Guard Service:** A dedicated microservice for detecting prompt injection attacks using the ProtectAI model.
 * **Web UI Monitoring Dashboard:** Real-time monitoring interface for:
     * Agent status visualization (AVAILABLE, BUSY, BROKEN states)
@@ -190,7 +188,6 @@ ORCHESTRATOR_API_KEY=YOUR_ORCHESTRATOR_API_KEY # Required. Authenticates the orc
 REQUIREMENT_REVIEW_DEDUP_WINDOW_SECONDS=300 # Default: 300. Per-work-item dedup window for the unauthenticated
                                  # /requirement-ready-for-review webhook (see "Architecture as Code (CALM)" above).
 REQUIREMENT_REVIEW_MAX_PER_MINUTE=5 # Default: 5. Global submission rate cap for /requirement-ready-for-review.
-JIRA_MCP_SERVER_URL=http://localhost:9000/sse # Default: http://localhost:9000/sse. The URL of the Jira MCP server.
 FEISHU_MCP_SERVER_URL=http://localhost:9010/sse # Default: http://localhost:9010/sse. The URL of the Feishu MCP server.
 
 # Photon API Relay (internal LLM proxy, Anthropic-compatible protocol)
@@ -235,7 +232,6 @@ TASK_EXECUTION_TIMEOUT=1200 # Default: 1200 (20 min). Max seconds to wait for th
 # Google Cloud Storage (via Volume Mounts)
 ATTACHMENTS_LOCAL_DESTINATION_FOLDER_PATH=/tmp # Default: /tmp. Path where attachments are read from.
 MCP_SERVER_ATTACHMENTS_FOLDER_PATH=/tmp # Default: /tmp. Path where MCP server stores attachments.
-JIRA_ATTACHMENT_SKIP_POSTFIX=_SKIP # Default: _SKIP. Attachments with filenames ending in this postfix are excluded.
 
 # OpenTelemetry (for tracing — leave unset to disable)
 OTEL_EXPORTER_OTLP_ENDPOINT= # Optional. OTLP HTTP endpoint, e.g. http://tempo:4318. Tracing is disabled when unset.
@@ -268,8 +264,6 @@ EMBEDDING_SERVICE_RETRY_BACKOFF_CAP_SECONDS=32.0
 
 # Incident Creation Agent Configuration
 INCIDENT_AGENT_MIN_SIMILARITY_SCORE=0.7
-ISSUE_PRIORITY_FIELD_ID=priority
-ISSUE_SEVERITY_FIELD_NAME=customfield_10124
 
 # Prompt Injection Detection
 PROMPT_INJECTION_CHECK_ENABLED=True
@@ -284,33 +278,6 @@ If you are running the orchestrator or agents locally (not in a Docker container
 1. **Prompt Injection Detection Model:** Required if `PROMPT_INJECTION_CHECK_ENABLED` is set to `True`. Run `scripts/download_prompt_guard_model.py`.
 2. **Embedding Model:** Required for components using the Vector DB (the Incident Creation agent and the Orchestrator). Run `scripts/download_embedding_model.py`.
 ```
-
-### Jira MCP Server Setup
-
-The QuAIA™ framework integrates with Jira via a Model Context Protocol (MCP) server. This server acts as an
-intermediary, handling communication between Jira webhooks and the orchestrator.
-
-To run the Jira MCP server, you will need Docker installed.
-
-1. **Create a `.env` file for the MCP server:**
-   The MCP server uses its own `.env` file for configuration. Create a file named `.env` in the `mcp/jira/` directory
-   with the following content:
-
-   ```
-   JIRA_URL=YOUR_JIRA_INSTANCE_URL
-   JIRA_API_TOKEN=YOUR_JIRA_API_TOKEN
-   JIRA_USERNAME=YOUR_JIRA_USERNAME
-   ```
-
-2. **Run the MCP Server using Docker:**
-   Navigate to the `mcp/jira/` directory and execute the `start_mcp_server.bat` script (Windows only):
-
-   ```bash
-   cd mcp/jira
-   start_mcp_server.bat
-   ```
-   This starts the Docker container for the MCP server on port `9000`. In the cloud, mount a GCS bucket to the
-   container so downloaded attachments are accessible by agents.
 
 ### Feishu MCP Server Setup
 
@@ -346,22 +313,19 @@ It is used by the Test Case Generation and Review agents to fetch the source PRD
    uv run gunicorn -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:9010 scripts.feishu_mcp_server:app
    ```
 
-3. **Start the Jira MCP Server (required for incident creation):**
-   See [Jira MCP Server Setup](#jira-mcp-server-setup) above.
-
-4. **Start the Embedding Service (optional):**
+3. **Start the Embedding Service (optional):**
    If you want to use a dedicated embedding service instead of loading the model in each agent:
    ```bash
    uv run python services/embedding_service/main.py
    ```
 
-5. **Start the Prompt Guard Service (optional):**
+4. **Start the Prompt Guard Service (optional):**
    Required if prompt injection checks are enabled.
    ```bash
    uv run python services/prompt_guard_service/main.py
    ```
 
-6. **Start Individual Agents:**
+5. **Start Individual Agents:**
    Open separate terminal windows for each agent you want to run:
 
     * **Requirements Review Agent:**
@@ -385,7 +349,7 @@ It is used by the Test Case Generation and Review agents to fetch the source PRD
       uv run python agents/incident_creation/main.py
       ```
 
-7. **Start the Orchestrator:**
+6. **Start the Orchestrator:**
    ```bash
    uv run python orchestrator/main.py
    ```
@@ -498,12 +462,8 @@ you run any of the commands below.
     * `FEISHU_APP_SECRET`
     * `MEEGO_PLUGIN_ID`
     * `MEEGO_PLUGIN_SECRET`
-    * `JIRA_API_TOKEN`
-    * `JIRA_USERNAME`
-    * `JIRA_URL`
     * `ZEPHYR_API_TOKEN`
     * `ZEPHYR_BASE_URL`
-    * `JIRA_MCP_SERVER_URL`
     * `ORCHESTRATOR_API_KEY`
 5. Cloud Storage bucket for general operations (with all needed folders created, see "Substitution Variables").
 6. Cloud Storage bucket for storing and publicly serving test execution reports (this bucket needs to have public
@@ -522,10 +482,7 @@ gcloud builds submit --config 'path/to/your/cloudbuild.yaml' --substitutions "`^
 ```
 
 **Substitution Variables:**
-* `_BUCKET_NAME`: The name of the Google Cloud Storage bucket used for storing attachments downloaded by Jira MCP
-  server.
-* `_JIRA_ATTACHMENTS_FOLDER`: The name of the folder where attachments from Jira MCP server will be saved, must be the
-  same as 'JIRA_ATTACHMENTS_CLOUD_STORAGE_FOLDER' environment variable
+* `_BUCKET_NAME`: The name of the Google Cloud Storage bucket used for storing attachments.
 * `_ALLURE_REPORTS_BUCKET`: The GCS bucket where test execution HTML reports will be stored.
 * `_REQUIREMENTS_REVIEW_AGENT_BASE_URL`: The URL of the deployed Requirements Review Agent.
 * `_TEST_CASE_GENERATION_AGENT_BASE_URL`: The URL of the deployed Test Case Generation Agent.
@@ -546,7 +503,7 @@ once, then identify the assigned URL of each service, update the substitution va
 The smoke suite is a self-contained integration test, independent of any Cloud Run deployment. It runs the real
 orchestrator and the QA agents (requirements review, test-case generation, classification, review and incident creation)
 under `docker-compose.smoke.yml`, driven by real models via the Photon API relay, with only the external boundaries
-replaced by mocks under `tests/smoke/mocks/` (Jira MCP, Jira REST, Feishu MCP, Feishu Project / Meego, Zephyr and Qdrant). A mock test-execution agent stands in for the
+replaced by mocks under `tests/smoke/mocks/` (Feishu MCP, Feishu Project / Meego, Zephyr and Qdrant). A mock test-execution agent stands in for the
 VM-hosted real executors. It drives the system through the orchestrator's public webhooks and asserts on what reaches
 each mocked boundary:
 
@@ -556,17 +513,14 @@ each mocked boundary:
   linked back to the originating story ID.
 * **Test-case classification** (same webhook) → labels are applied to the test case work items in Feishu Project.
 * **Test-case review** (same webhook) → review comments and status transitions reach the test case work items in Feishu Project.
-* **Test execution / incident creation** (`POST /execute-tests`) → a failed automated test drives a real Bug issue into
-  the seeded Jira project, the failed execution is reported to Zephyr inside a fresh test cycle, the bug is linked to
-  that execution, and the duplicate search consulted the vector DB.
-* **RAG DB update** (`POST /update-rag-db`) → the sync pushes the seeded Jira story into the mocked vector DB
-  (collection creation + point upsert).
+* **Test execution / incident creation** (`POST /execute-tests`) → a failed automated test drives incident creation,
+  the failed execution is reported to Zephyr inside a fresh test cycle, and the duplicate search consulted the vector DB.
 * **Negative paths** → the three authenticated webhooks reject an invalid API key (401); `/requirement-ready-for-review`
   is unauthenticated by design and instead silently drops (204) a malformed payload or one with no PRD link filled in;
   a missing `story_id`/`feishu_doc` fails with 400, a missing `project_key` fails with 422, and the dashboard API
   rejects a missing token (401) — all without dispatching to an agent.
 
-The four webhooks are fired once, concurrently (the flows are mutually independent), so the suite's wall time is the
+The three webhooks are fired once, concurrently (the flows are mutually independent), so the suite's wall time is the
 longest flow rather than the sum of all flows.
 
 It runs in GitHub Actions (the `smoke` job in `.github/workflows/ci.yml`) on pushes to `main` and on manual
@@ -615,7 +569,7 @@ The orchestrator listens for webhooks from Feishu Project automation rules to in
 You can trigger the execution of automated tests for a specific project.
 
 * **Execute Tests:**
-  Send a POST request to `/execute-tests` with a JSON payload containing the `project_key` of the Jira project. This
+  Send a POST request to `/execute-tests` with a JSON payload containing the `project_key` of the project. This
   will execute all test cases labeled as "automated" within that project. For any failed tests, the orchestrator will
   automatically trigger incident creation using the Incident Creation Agent.
 
@@ -626,22 +580,6 @@ You can trigger the execution of automated tests for a specific project.
   }
   ```
   The results will be reported back to Zephyr and an Allure report will be generated.
-
-### Updating the RAG Vector Database
-
-To keep the vector database synchronized with Jira issues for duplicate detection:
-
-* **Update RAG DB:**
-  Send a POST request to `/update-rag-db` with a JSON payload containing the `project_key` of the Jira project. The
-  orchestrator then syncs the project's issues from Jira (read directly via the Jira REST API) into the Qdrant vector
-  database, enabling semantic search for duplicate detection. The sync runs programmatically — no LLM agent is involved.
-
-  Example payload:
-  ```json
-  {
-      "project_key": "SCRUM"
-  }
-  ```
 
 ### Dashboard API Endpoints
 
@@ -667,7 +605,7 @@ The dashboard exposes REST API endpoints for programmatic access to monitoring d
 
 ## A2A Streaming Contract
 
-QuAIA™ uses the A2A artifact mechanism to push live updates from agents to the orchestrator
+QuAIA uses the A2A artifact mechanism to push live updates from agents to the orchestrator
 dashboard while a task is running.
 
 ### `report_activity` Tool
@@ -796,7 +734,7 @@ stack is up, run it explicitly with `uv run pytest -m smoke`. It runs in CI on p
 
 ## Contributing
 
-We welcome contributions to QuAIA™! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on
+We welcome contributions to QuAIA! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on
 how to contribute.
 
 ## License

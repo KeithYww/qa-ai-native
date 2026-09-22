@@ -49,6 +49,48 @@ async def test_update_status(registry, sample_card):
     await registry.update_status(agent_id, AgentStatus.BUSY)
     assert await registry.get_status(agent_id) == AgentStatus.BUSY
 
+    # Releasing the slot returns the agent to AVAILABLE.
+    await registry.update_status(agent_id, AgentStatus.AVAILABLE)
+    assert await registry.get_status(agent_id) == AgentStatus.AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_slot_counting_multiple_concurrent_tasks(registry, sample_card):
+    """Each BUSY call increments a slot; only the last AVAILABLE call restores AVAILABLE status."""
+    agent_id = "agent-1"
+    await registry.register(agent_id, sample_card)
+
+    await registry.update_status(agent_id, AgentStatus.BUSY)
+    await registry.update_status(agent_id, AgentStatus.BUSY)
+    assert await registry.get_status(agent_id) == AgentStatus.BUSY
+
+    # First AVAILABLE only decrements the counter; agent stays BUSY.
+    await registry.update_status(agent_id, AgentStatus.AVAILABLE)
+    assert await registry.get_status(agent_id) == AgentStatus.BUSY
+
+    # Second AVAILABLE brings the counter to zero → truly AVAILABLE.
+    await registry.update_status(agent_id, AgentStatus.AVAILABLE)
+    assert await registry.get_status(agent_id) == AgentStatus.AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_get_available_agents_respects_max_slots(registry, sample_card):
+    """An agent at MAX_SLOTS busy slots is excluded from get_available_agents()."""
+    from config import OrchestratorConfig
+    agent_id = "agent-1"
+    await registry.register(agent_id, sample_card)
+
+    max_slots = OrchestratorConfig.MAX_SLOTS_PER_AGENT
+    # Fill all slots.
+    for _ in range(max_slots):
+        await registry.update_status(agent_id, AgentStatus.BUSY)
+
+    assert agent_id not in await registry.get_available_agents()
+
+    # Freeing one slot makes the agent available again.
+    await registry.update_status(agent_id, AgentStatus.AVAILABLE)
+    assert agent_id in await registry.get_available_agents()
+
 
 @pytest.mark.asyncio
 async def test_update_status_with_broken_reason(registry, sample_card):

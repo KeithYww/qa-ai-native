@@ -59,6 +59,9 @@ class TaskRecord:
     agent_logs: list[str] | None = None
     current_activity: str | None = None
     token_usage: dict[str, Any] | None = None
+    # Human-readable summary of what the agent produced (e.g. generated test cases, review feedback).
+    # Stored here so the dashboard can show output without the full trace.
+    result_summary: str | None = None
     # Redacted debug trace of the agent's run (JSON string). Deliberately excluded from
     # to_dict() below — it can be much larger than the rest of the record and is only
     # needed by the dedicated trace endpoint, not the /api/dashboard/tasks list.
@@ -86,6 +89,7 @@ class TaskRecord:
             "agent_logs": self.agent_logs,
             "current_activity": self.current_activity,
             "token_usage": self.token_usage,
+            "result_summary": self.result_summary,
         }
 
 
@@ -173,6 +177,12 @@ class TaskHistory:
             if task_id in self._tasks_by_id:
                 self._tasks_by_id[task_id].trace_json = trace_json
 
+    async def update_result_summary(self, task_id: str, summary: str) -> None:
+        """Store a human-readable summary of what the agent produced."""
+        async with self._lock:
+            if task_id in self._tasks_by_id:
+                self._tasks_by_id[task_id].result_summary = summary
+
     async def get_by_id(self, task_id: str) -> TaskRecord | None:
         """Get a specific task by ID."""
         async with self._lock:
@@ -231,7 +241,8 @@ class AgentRegistry:
         self._statuses: dict[str, AgentStatus] = {}
         self._broken_reasons: dict[str, BrokenReason] = {}
         self._stuck_task_ids: dict[str, str] = {}  # agent_id -> last stuck task_id
-        self._current_tasks: dict[str, str] = {}  # agent_id -> current task_id
+        self._current_tasks: dict[str, list[str]] = {}  # agent_id -> list of running task_ids
+        self._busy_slots: dict[str, int] = {}  # agent_id -> number of tasks currently running
         self._lock = asyncio.Lock()
 
     async def get_card(self, agent_id: str) -> AgentCard | None:
@@ -248,6 +259,7 @@ class AgentRegistry:
             self._cards[agent_id] = card
             if agent_id not in self._statuses:
                 self._statuses[agent_id] = AgentStatus.AVAILABLE
+                self._busy_slots[agent_id] = 0
 
     async def update_status(
         self,
@@ -257,30 +269,48 @@ class AgentRegistry:
         stuck_task_id: str | None = None,
     ):
         async with self._lock:
-            if agent_id in self._cards:
-                self._statuses[agent_id] = status
-                if status == AgentStatus.BROKEN and broken_reason:
-                    self._broken_reasons[agent_id] = broken_reason
-                    if stuck_task_id:
-                        self._stuck_task_ids[agent_id] = stuck_task_id
-                elif status == AgentStatus.AVAILABLE:
-                    # Clear broken context when agent becomes available
+            if agent_id not in self._cards:
+                return
+            if status == AgentStatus.BUSY:
+                # Increment slot count; status is always BUSY when any slot is occupied.
+                self._busy_slots[agent_id] = self._busy_slots.get(agent_id, 0) + 1
+                self._statuses[agent_id] = AgentStatus.BUSY
+            elif status == AgentStatus.AVAILABLE:
+                # Decrement slot count; status returns to AVAILABLE only when all slots free.
+                slots = max(0, self._busy_slots.get(agent_id, 0) - 1)
+                self._busy_slots[agent_id] = slots
+                if slots == 0:
+                    self._statuses[agent_id] = AgentStatus.AVAILABLE
                     self._broken_reasons.pop(agent_id, None)
                     self._stuck_task_ids.pop(agent_id, None)
                     self._current_tasks.pop(agent_id, None)
+            elif status == AgentStatus.BROKEN:
+                self._statuses[agent_id] = AgentStatus.BROKEN
+                if broken_reason:
+                    self._broken_reasons[agent_id] = broken_reason
+                    if stuck_task_id:
+                        self._stuck_task_ids[agent_id] = stuck_task_id
 
     async def set_current_task(self, agent_id: str, task_id: str | None):
-        """Set the current task for an agent."""
+        """Add or remove a task from the agent's running task list."""
         async with self._lock:
             if task_id:
-                self._current_tasks[agent_id] = task_id
+                if agent_id not in self._current_tasks:
+                    self._current_tasks[agent_id] = []
+                self._current_tasks[agent_id].append(task_id)
             else:
                 self._current_tasks.pop(agent_id, None)
 
     async def get_current_task(self, agent_id: str) -> str | None:
-        """Get the current task for an agent."""
+        """Get the most recently started task for this agent (for backward-compatible display)."""
         async with self._lock:
-            return self._current_tasks.get(agent_id)
+            tasks = self._current_tasks.get(agent_id)
+            return tasks[-1] if tasks else None
+
+    async def get_current_tasks(self, agent_id: str) -> list[str]:
+        """Get all currently running task IDs for this agent."""
+        async with self._lock:
+            return list(self._current_tasks.get(agent_id, []))
 
     async def get_status(self, agent_id: str) -> AgentStatus:
         async with self._lock:
@@ -300,6 +330,7 @@ class AgentRegistry:
             self._broken_reasons.pop(agent_id, None)
             self._stuck_task_ids.pop(agent_id, None)
             self._current_tasks.pop(agent_id, None)
+            self._busy_slots.pop(agent_id, None)
 
     async def get_all_cards(self) -> dict[str, AgentCard]:
         async with self._lock:
@@ -320,10 +351,17 @@ class AgentRegistry:
             ]
 
     async def get_available_agents(self) -> list[str]:
-        """Get agents that are AVAILABLE for new tasks (not BUSY or BROKEN)."""
+        """Get agents that have at least one free slot for a new task (not BROKEN and below MAX_SLOTS)."""
+        from config import OrchestratorConfig
+
+        max_slots = OrchestratorConfig.MAX_SLOTS_PER_AGENT
         async with self._lock:
             return [
-                aid for aid, status in self._statuses.items() if status == AgentStatus.AVAILABLE and aid in self._cards
+                aid
+                for aid, status in self._statuses.items()
+                if status != AgentStatus.BROKEN
+                and aid in self._cards
+                and self._busy_slots.get(aid, 0) < max_slots
             ]
 
     async def get_agent_id_by_url(self, url: str) -> str | None:

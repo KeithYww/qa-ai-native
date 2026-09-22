@@ -21,7 +21,14 @@ from common import utils
 from common.a2a_contract import ArtifactName
 from common.agent_log_capture import AgentLogCaptureHandler
 from common.models import AgentRuntimeError
-from common.streaming import reset_current_log_handler, set_current_log_handler
+from common.streaming import (
+    reset_current_activity_queue,
+    reset_current_log_handler,
+    reset_current_task_id,
+    set_current_activity_queue,
+    set_current_log_handler,
+    set_current_task_id,
+)
 
 logger = utils.get_logger("agent_executor")
 
@@ -36,13 +43,9 @@ class DefaultAgentExecutor(AgentExecutor):
     def __init__(self, agent):
         self.agent = agent
         self._active_runs: dict[str, asyncio.Task] = {}
-        # Agents run one task at a time; execute() mutates shared per-agent state
-        # (activity queue, log handler), so concurrent calls must be serialized.
-        self._execute_lock = asyncio.Lock()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        async with self._execute_lock:
-            await self._execute_task(context, event_queue)
+        await self._execute_task(context, event_queue)
 
     async def _execute_task(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
@@ -56,14 +59,16 @@ class DefaultAgentExecutor(AgentExecutor):
         root_logger.addHandler(log_handler)
         handler_token = set_current_log_handler(log_handler)
 
+        # Per-request activity queue and task_id: both bound via ContextVar so that
+        # any logger in the call chain (including custom_llm_wrapper) can emit task_id
+        # as a structured field without threading it through the call stack.
+        per_request_activity_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+        activity_token = set_current_activity_queue(per_request_activity_queue)
+        task_id_token = set_current_task_id(task_id)
+
         logs_artifact_id = str(uuid4())  # stable id correlating every log chunk for this task
         sent_any_logs = False
         handler_detached = False
-
-        # Clear any items a crashed prior task may have left (agents run one task at a time).
-        activity_queue = self.agent.activity_queue
-        while not activity_queue.empty():
-            activity_queue.get_nowait()
 
         # Reset usage/trace so a failed run cannot emit the previous task's artifacts.
         self.agent.latest_token_usage = None
@@ -74,7 +79,7 @@ class DefaultAgentExecutor(AgentExecutor):
             # A transient update_status failure is logged and the loop keeps streaming.
             while True:
                 try:
-                    description = await activity_queue.get()
+                    description = await per_request_activity_queue.get()
                     await updater.update_status(TaskState.TASK_STATE_WORKING, message=new_text_message(description))
                 except asyncio.CancelledError:
                     return
@@ -117,6 +122,10 @@ class DefaultAgentExecutor(AgentExecutor):
             self._active_runs[task_id] = run_task
             try:
                 result = await run_task
+                # Capture per-request artifacts immediately before any subsequent await
+                # could allow another concurrent task to overwrite these instance attributes.
+                token_usage = self.agent.latest_token_usage
+                trace = self.agent.latest_trace
             finally:
                 self._active_runs.pop(task_id, None)
 
@@ -143,16 +152,17 @@ class DefaultAgentExecutor(AgentExecutor):
                         last_chunk=True,
                     )
 
-                # 3. Detach the handler.
+                # 3. Detach the handler and per-request queue ContextVar.
                 reset_current_log_handler(handler_token)
                 root_logger.removeHandler(log_handler)
+                reset_current_activity_queue(activity_token)
+                reset_current_task_id(task_id_token)
                 handler_detached = True
 
             # 4. Execution-result artifact (auto-generated unique artifact_id avoids id collisions).
             await updater.add_artifact(parts=list(result.parts), name=ArtifactName.EXECUTION_RESULT)
 
             # 4b. Token-usage artifact so the orchestrator can record consumption and cost.
-            token_usage = self.agent.latest_token_usage
             if token_usage is not None:
                 await updater.add_artifact(
                     parts=[
@@ -166,7 +176,6 @@ class DefaultAgentExecutor(AgentExecutor):
                 )
 
             # 4c. Redacted trace artifact so the dashboard can show a debug view of the run.
-            trace = self.agent.latest_trace
             if trace is not None:
                 await updater.add_artifact(
                     parts=[Part(raw=trace, media_type="application/json", filename="trace.json")],
@@ -191,12 +200,14 @@ class DefaultAgentExecutor(AgentExecutor):
             await updater.failed(message=new_text_message(str(e)))
 
         except Exception as e:
-            logger.exception(f"Error executing task {task_id}: {e}")
+            logger.exception(f"Error executing task {task_id}: {e}", extra={"task_id": task_id})
             await updater.failed(message=new_text_message(f"An error occurred: {e!s}"))
         finally:
             if not handler_detached:
                 reset_current_log_handler(handler_token)
                 root_logger.removeHandler(log_handler)
+                reset_current_activity_queue(activity_token)
+                reset_current_task_id(task_id_token)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id

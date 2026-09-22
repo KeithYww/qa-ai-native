@@ -77,7 +77,7 @@ async def test_send_task_success(mock_registry):
 
         mock_a2a_client.send_message.return_value = response_generator()
 
-        task = await _send_task_to_agent("input", "desc")
+        task, _ = await _send_task_to_agent("input", "desc")
 
         assert task.status.state == TaskState.TASK_STATE_COMPLETED
         mock_registry.update_status.assert_any_call("agent-1", AgentStatus.AVAILABLE)

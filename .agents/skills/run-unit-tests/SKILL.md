@@ -7,7 +7,7 @@ description: Executes all unit tests and fixes any issues related to the executi
 
 # Run Unit Tests
 
-This skill provides a comprehensive guide for executing unit tests in the QuAIA™ framework, identifying root causes of failures, and fixing issues.
+This skill provides a comprehensive guide for executing unit tests in the QuAIA framework, identifying root causes of failures, and fixing issues.
 
 ## Overview
 

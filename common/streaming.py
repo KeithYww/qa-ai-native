@@ -12,10 +12,12 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    import asyncio
+
     from common.agent_log_capture import AgentLogCaptureHandler
 
 # ---------------------------------------------------------------------------
-# ContextVar
+# ContextVars
 # ---------------------------------------------------------------------------
 
 current_log_handler: ContextVar["AgentLogCaptureHandler | None"] = ContextVar("current_log_handler", default=None)
@@ -29,6 +31,41 @@ def set_current_log_handler(handler: "AgentLogCaptureHandler") -> Token:
 def reset_current_log_handler(token: Token) -> None:
     """Reset the log handler binding using the token returned by set_current_log_handler."""
     current_log_handler.reset(token)
+
+
+# Per-request activity queue: executor binds a fresh queue before each agent.run(); the
+# agent's report_activity reads from this ContextVar so concurrent tasks route their
+# activity updates to the correct queue.
+# Routing relies on asyncio Task context inheritance. threading.Thread callers will see
+# None here and report_activity will fall back to the agent's instance queue.
+current_activity_queue: ContextVar["asyncio.Queue[str] | None"] = ContextVar(
+    "current_activity_queue", default=None
+)
+
+
+def set_current_activity_queue(queue: "asyncio.Queue[str]") -> Token:
+    """Bind per-request activity queue to the current context; returns a reset token."""
+    return current_activity_queue.set(queue)
+
+
+def reset_current_activity_queue(token: Token) -> None:
+    """Reset the activity queue binding using the token returned by set_current_activity_queue."""
+    current_activity_queue.reset(token)
+
+
+# Per-request task ID: set by executor so any logger in the call chain can emit it as a
+# structured field without threading it through the call stack.
+current_task_id: ContextVar["str | None"] = ContextVar("current_task_id", default=None)
+
+
+def set_current_task_id(task_id: str) -> Token:
+    """Bind task_id to the current context; returns a reset token."""
+    return current_task_id.set(task_id)
+
+
+def reset_current_task_id(token: Token) -> None:
+    """Reset the task_id binding."""
+    current_task_id.reset(token)
 
 
 # ---------------------------------------------------------------------------

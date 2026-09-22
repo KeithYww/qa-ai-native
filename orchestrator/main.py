@@ -139,7 +139,7 @@ async def lifespan(app: FastAPI):
     # Perform initial agent discovery before accepting requests
     logger.info("Starting initial agent discovery...")
     try:
-        await _discover_agents()
+        await _discover_agents_with_startup_retry()
         logger.info("Initial agent discovery finished.")
     except Exception as e:
         _record_error(f"Initial agent discovery failed: {e}")
@@ -810,12 +810,13 @@ async def _run_requirement_review(work_item_id: str, project_key: str, feishu_do
             f"Feishu Project work item ID: {work_item_id}\n"
             f"Feishu Project key: {project_key}"
         )
-        completed_task = await _send_task_to_agent(input_data, task_description)
+        completed_task, _ = await _send_task_to_agent(input_data, task_description)
         _validate_task_status(completed_task, f"Review of requirement document for work item {work_item_id}")
         logger.info(f"Requirements review completed for work item {work_item_id}.")
     except Exception as e:
         _record_error(f"Requirements review for work item {work_item_id} failed: {e}")
-        logger.error(f"Requirements review for work item {work_item_id} failed: {e}", exc_info=True)
+        logger.error(f"Requirements review for work item {work_item_id} failed: {e}",
+                     exc_info=True, extra={"work_item_id": work_item_id})
 
 
 # noinspection PyUnusedLocal
@@ -858,24 +859,34 @@ async def _run_pipeline(story_id: str, project_key: str, feishu_doc: str) -> Non
         logger.info(f"Pipeline for story {story_id} completed successfully.")
     except Exception as e:
         _record_error(f"Pipeline for story {story_id} failed: {e}")
-        logger.error(f"Pipeline for story {story_id} failed: {e}", exc_info=True)
+        logger.error(f"Pipeline for story {story_id} failed: {e}",
+                     exc_info=True, extra={"story_id": story_id})
 
 
 async def _pipeline_consumer() -> None:
-    """Sequentially consumes and executes queued jobs.
+    """Concurrently consumes and executes queued jobs up to MAX_CONCURRENT_PIPELINES at a time.
 
-    Each job (a test-case pipeline run or a requirements review) is expected to handle
-    and log its own errors, mirroring _run_pipeline's existing behavior. This outer
-    except is a last-resort safety net, not the primary error-reporting path.
+    Each job (a test-case pipeline run or a requirements review) is dispatched as an
+    asyncio background task and guarded by a semaphore so no more than
+    MAX_CONCURRENT_PIPELINES run simultaneously. task_done() is called inside the
+    background task when the job finishes, preserving correct queue join semantics.
     """
+    sem = asyncio.Semaphore(config.OrchestratorConfig.MAX_CONCURRENT_PIPELINES)
+
+    async def _run_job(job: Callable[[], Awaitable[None]]) -> None:
+        async with sem:
+            try:
+                await job()
+            except Exception as e:
+                _record_error(f"Queued job failed unexpectedly: {e}")
+            finally:
+                _pipeline_queue.task_done()
+
     while True:
         job = await _pipeline_queue.get()
-        try:
-            await job()
-        except Exception as e:
-            _record_error(f"Queued job failed unexpectedly: {e}")
-        finally:
-            _pipeline_queue.task_done()
+        task = asyncio.create_task(_run_job(job))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
 
 # noinspection PyUnusedLocal
@@ -1109,7 +1120,8 @@ async def _agent_worker(
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.exception(f"Error in worker for agent {agent_id}.")
+                logger.exception(f"Error in worker for agent {agent_id}.",
+                                  extra={"agent_id": agent_id})
                 # Mark agent as BROKEN - task execution failed
                 await agent_registry.update_status(agent_id, AgentStatus.BROKEN, BrokenReason.TASK_STUCK)
                 # Hand the agent to the recovery task (matches the other BROKEN sites).
@@ -1162,7 +1174,7 @@ async def _execute_single_test(agent_id: str, test_case: TestCase, test_type: st
     artifacts = []
     start_timestamp = datetime.now()
     try:
-        completed_task = await _send_task_to_agent(execution_request.model_dump_json(), task_description)
+        completed_task, _ = await _send_task_to_agent(execution_request.model_dump_json(), task_description)
         artifacts = _get_artifacts_from_task(completed_task, task_description)
     except Exception as e:
         _handle_exception(f"Failed to execute test case {test_case.key}. Error: {e}", 500)
@@ -1183,7 +1195,8 @@ Test case execution results:\n```{text_results}```
         if not test_execution_result:
             raise ValueError("Couldn't map the test execution results received from the agent to the expected format.")
     except Exception as e:
-        logger.error(f"Results extraction failed for test case {test_case.key}: {e}")
+        logger.error(f"Results extraction failed for test case {test_case.key}: {e}",
+                     extra={"task_id": test_case.key})
         return TestExecutionResult(
             stepResults=[],
             testCaseKey=test_case.key,
@@ -1240,14 +1253,15 @@ async def _request_incident_creation(
     # Create the message
     message = new_message(parts=message_parts, role=Role.ROLE_USER)
 
-    completed_task = await _send_task_to_agent_with_message(message, task_description)
+    completed_task, _ = await _send_task_to_agent_with_message(message, task_description)
 
     task_description = f"Incident creation for test case {incident_input.test_case.key}"
     received_artifacts = _get_artifacts_from_task(completed_task, task_description)
     result = _get_model_from_artifacts(received_artifacts, task_description, IncidentCreationResult)
 
     if isinstance(result, AgentExecutionError):
-        logger.error(f"Incident creation failed for test case {incident_input.test_case.key}: {result.error_message}")
+        logger.error(f"Incident creation failed for test case {incident_input.test_case.key}: {result.error_message}",
+                     extra={"task_id": incident_input.test_case.key})
         return None
 
     return result
@@ -1266,13 +1280,22 @@ async def _request_test_cases_generation(feishu_doc: str) -> GeneratedTestCases:
         HTTPException: If an AgentExecutionError is returned by the agent.
     """
     task_description = "Generate test cases from Feishu PRD document"
-    completed_task = await _send_task_to_agent(feishu_doc, task_description)
+    completed_task, internal_task_id = await _send_task_to_agent(feishu_doc, task_description)
     task_description = "Generation of test cases from Feishu PRD document"
     received_artifacts = _get_artifacts_from_task(completed_task, task_description)
     result = _get_model_from_artifacts(received_artifacts, task_description, GeneratedTestCases)
 
     if isinstance(result, AgentExecutionError):
         _handle_exception(f"Test case generation failed: {result.error_message}")
+
+    summary_lines = [f"生成 {len(result.test_cases)} 个测试用例"]
+    if result.test_cases:
+        summary_lines.append("\n".join(f"  · {tc.name}" for tc in result.test_cases[:20]))
+        if len(result.test_cases) > 20:
+            summary_lines.append(f"  ...共 {len(result.test_cases)} 个")
+    if result.llm_comments:
+        summary_lines.append(f"\nLLM 备注: {result.llm_comments}")
+    await task_history.update_result_summary(internal_task_id, "\n".join(summary_lines))
 
     return result
 
@@ -1287,7 +1310,7 @@ def _get_artifacts_from_task(task: Task, task_description: str) -> list[Artifact
 
 async def _request_test_cases_classification(test_cases: list[TestCase]) -> ClassifiedTestCases:
     task_description = "Classify generated test cases"
-    completed_task = await _send_task_to_agent(
+    completed_task, internal_task_id = await _send_task_to_agent(
         f"Test cases:\n{json.dumps([tc.model_dump() for tc in test_cases], ensure_ascii=False)}",
         task_description,
     )
@@ -1295,6 +1318,14 @@ async def _request_test_cases_classification(test_cases: list[TestCase]) -> Clas
     result = _get_model_from_artifacts(artifacts, task_description, ClassifiedTestCases)
     if isinstance(result, AgentExecutionError):
         _handle_exception(f"Test case classification failed: {result.error_message}")
+
+    from collections import Counter
+    label_counts = Counter(label for tc in result.test_cases for label in (tc.labels or []))
+    summary = f"分类完成, 共 {len(result.test_cases)} 个用例"
+    if label_counts:
+        summary += ", 标签分布: " + " / ".join(f"{k} x{v}" for k, v in label_counts.most_common())
+    await task_history.update_result_summary(internal_task_id, summary)
+
     return result
 
 
@@ -1308,11 +1339,25 @@ async def _request_test_cases_review(test_cases: list[TestCase], feishu_doc: str
         f"Requirement document content:\n{doc_content}\n\n"
         f"Test cases:\n{json.dumps({'test_cases': [tc.model_dump() for tc in test_cases]})}"
     )
-    completed_task = await _send_task_to_agent(message, task_description)
+    completed_task, internal_task_id = await _send_task_to_agent(message, task_description)
     artifacts = _get_artifacts_from_task(completed_task, "Review of test cases")
     result = _get_model_from_artifacts(artifacts, task_description, TestCaseReviewFeedbacks)
     if isinstance(result, AgentExecutionError):
         _handle_exception(f"Test case review failed: {result.error_message}")
+
+    feedbacks_with_issues = [f for f in result.review_feedbacks if f.review_feedback]
+    summary_lines = [
+        f"评审 {len(result.review_feedbacks)} 个用例, "
+        f"{len(feedbacks_with_issues)} 个有改进建议"
+    ]
+    for fb in feedbacks_with_issues:
+        summary_lines.append(f"\n[{fb.test_case_id}]")
+        for line in fb.review_feedback:
+            summary_lines.append(f"  · {line}")
+    if result.llm_comments:
+        summary_lines.append(f"\nLLM 备注: {result.llm_comments}")
+    await task_history.update_result_summary(internal_task_id, "\n".join(summary_lines))
+
     return result
 
 
@@ -1323,7 +1368,8 @@ async def _write_test_cases_to_feishu_project(
     if config.MEEGO_PLUGIN_ID and config.MEEGO_PLUGIN_SECRET:
         client = MeegoClient()
         keys = client.create_test_cases(test_cases, project_key, story_id)
-        for tc, key in zip(test_cases, keys):
+        # create_test_cases skips ids it couldn't create, so keys can be shorter than test_cases.
+        for tc, key in zip(test_cases, keys, strict=False):
             tc.key = key
             tc.parent_issue_key = story_id
     else:
@@ -1629,7 +1675,7 @@ async def _save_agent_trace_from_task(task: Task, internal_task_id: str) -> None
         logger.warning(f"Failed to extract trace for task {internal_task_id}: {e}")
 
 
-async def _send_task_to_agent_with_message(message: Message, task_description: str) -> Task | None:
+async def _send_task_to_agent_with_message(message: Message, task_description: str) -> tuple[Task | None, str]:
     """Send a custom message (with file parts) to an agent.
 
     Args:
@@ -1637,7 +1683,7 @@ async def _send_task_to_agent_with_message(message: Message, task_description: s
         task_description: Description of the task for agent selection and logging.
 
     Returns:
-        The completed Task, or None if the task failed to complete.
+        Tuple of (completed Task or None, internal_task_id).
     """
 
     internal_task_id = str(uuid4())
@@ -1695,7 +1741,7 @@ async def _send_task_to_agent_with_message(message: Message, task_description: s
                     await _save_agent_trace_from_task(completed_task, internal_task_id)
                     await agent_registry.update_status(agent_id, AgentStatus.AVAILABLE)
                     await agent_registry.set_current_task(agent_id, None)
-                    return completed_task
+                    return completed_task, internal_task_id
                 await _finalize_task(
                     internal_task_id, agent_id, TaskStatus.FAILED, "Iterator finished before completion"
                 )
@@ -1754,7 +1800,7 @@ async def _send_task_to_agent_with_message(message: Message, task_description: s
                     await _save_agent_trace_from_task(completed_task, internal_task_id)
                     await agent_registry.update_status(agent_id, AgentStatus.AVAILABLE)
                     await agent_registry.set_current_task(agent_id, None)
-                    return completed_task
+                    return completed_task, internal_task_id
                 elif last_status.state == TaskState.TASK_STATE_WORKING:
                     activity_text = get_message_text(last_status.message) if last_status.message else None
                     if activity_text:
@@ -1785,7 +1831,7 @@ async def _send_task_to_agent_with_message(message: Message, task_description: s
         _handle_exception(
             f"Task for {task_description} wasn't complete within timeout.", 408, internal_task_id, agent_id
         )
-        return None
+        return None, internal_task_id
 
     except HTTPException:
         # HTTPException is raised by _handle_exception, agent status already handled above
@@ -1806,7 +1852,7 @@ async def _send_task_to_agent_with_message(message: Message, task_description: s
             await httpx_client.aclose()
 
 
-async def _send_task_to_agent(input_data: str, task_description: str) -> Task | None:
+async def _send_task_to_agent(input_data: str, task_description: str) -> tuple[Task | None, str]:
     """Send a text message to an agent.
 
     Args:
@@ -1814,7 +1860,7 @@ async def _send_task_to_agent(input_data: str, task_description: str) -> Task | 
         task_description: Description of the task for agent selection and logging.
 
     Returns:
-        The completed Task, or None if the task failed to complete.
+        Tuple of (completed Task or None, internal_task_id).
     """
     message = new_text_message(input_data, role=Role.ROLE_USER)
     return await _send_task_to_agent_with_message(message, task_description)
@@ -1849,12 +1895,12 @@ async def reserve_agent_waiting_if_needed(
             if available_agent_ids:
                 agent_id = await _select_agent(task_description, available_agent_ids, task_id)
                 if agent_id:
-                    # Double-check agent is still available (might have changed during _select_agent)
-                    current_status = await agent_registry.get_status(agent_id)
-                    if current_status == AgentStatus.AVAILABLE:
+                    # Double-check agent still has a free slot (may have changed during _select_agent)
+                    re_checked_ids = await agent_registry.get_available_agents()
+                    if agent_id in re_checked_ids:
                         agent_card = await agent_registry.get_card(agent_id)
                         if agent_card:
-                            # Atomically mark as BUSY before releasing the lock
+                            # Atomically increment slot count (BUSY) before releasing the lock
                             await agent_registry.update_status(agent_id, AgentStatus.BUSY)
                             agent_name = await agent_registry.get_name(agent_id)
                             logger.info(
@@ -2116,6 +2162,28 @@ async def _discover_agents():
 
     tasks = [_process_url_discovery(url) for url in set(remote_agent_urls)]
     await asyncio.gather(*tasks)
+
+
+async def _discover_agents_with_startup_retry() -> None:
+    """Runs _discover_agents() a few times with a short delay between attempts.
+
+    Only used for the initial, at-startup discovery: in the all-in-one deployment, the
+    orchestrator and the agents are separate uvicorn servers launched concurrently in the same
+    process (scripts/start_all.py), so the orchestrator can start probing an agent's port before
+    that agent has finished binding it. Stops early once two consecutive attempts register the
+    same number of agents (nothing new to wait for) — this also means an environment with zero
+    discoverable agents exits after just two attempts instead of using the full budget.
+    """
+    previous_count = -1
+    max_attempts = config.OrchestratorConfig.INITIAL_DISCOVERY_MAX_ATTEMPTS
+    for attempt in range(1, max_attempts + 1):
+        await _discover_agents()
+        current_count = len(await agent_registry.get_all_cards())
+        if current_count == previous_count:
+            return
+        previous_count = current_count
+        if attempt < max_attempts:
+            await asyncio.sleep(config.OrchestratorConfig.INITIAL_DISCOVERY_RETRY_DELAY_SECONDS)
 
 
 # =============================================================================

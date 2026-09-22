@@ -7,7 +7,7 @@ description: Allows to plan and guide the implementation of new features or modi
 
 # Software Architect Skill
 
-This skill guides you through the process of architecting and planning software changes for the QuAIA™ framework. It ensures that all
+This skill guides you through the process of architecting and planning software changes for the QuAIA framework. It ensures that all
 modifications align with the current tech stack (Python 3.12+, FastAPI, Pydantic V2, Agentic Frameworks), adhere to 2025/2026 best
 practices, and use established design patterns.
 
